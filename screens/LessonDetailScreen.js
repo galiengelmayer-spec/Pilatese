@@ -312,12 +312,9 @@ export default function LessonDetailScreen() {
                   <View key={cs.client_id} style={[styles.clientRow, styles.replacedRow]}>
                     <View style={styles.clientInfo}>
                       {substituteName ? (
-                        <>
-                          <Text style={styles.substituteNameText}>{substituteName}</Text>
-                          <Text style={styles.replacedSubLabel}>
-                            {replaceVerb(substituteGender)} את {cs.clients?.name}
-                          </Text>
-                        </>
+                        <Text style={styles.replacedSentence}>
+                          {substituteName} {replaceVerb(substituteGender)} את {cs.clients?.name}
+                        </Text>
                       ) : (
                         <Text style={styles.clientName}>{cs.clients?.name}</Text>
                       )}
@@ -440,8 +437,7 @@ const styles = StyleSheet.create({
 
   clientInfo: { flex: 1 },
   clientName: { fontSize: 15, color: '#333', fontWeight: '500', textAlign: 'right' },
-  substituteNameText: { fontSize: 15, color: '#E65100', fontWeight: '700', textAlign: 'right' },
-  replacedSubLabel: { fontSize: 12, color: '#888', textAlign: 'right', marginTop: 2 },
+  replacedSentence: { fontSize: 14, color: '#E65100', fontWeight: '600', textAlign: 'right' },
   notifiedLabel: { fontSize: 10, color: '#888', textAlign: 'right', marginBottom: 1 },
   emptySlot: { fontSize: 14, color: '#BDBDBD', fontStyle: 'italic', flex: 1, textAlign: 'right' },
 

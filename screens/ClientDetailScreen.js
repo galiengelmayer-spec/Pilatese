@@ -7,6 +7,7 @@ import { useRoute, useNavigation } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
 import { useStudioSchedule, getSlotsForDay } from '../lib/studioSchedule';
 import { useClientPayments } from '../lib/payments';
+import { guessGenderFromName } from '../lib/hebrewNames';
 import SlidePanel from '../components/SlidePanel';
 
 const DAYS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי'];
@@ -71,11 +72,18 @@ export default function ClientDetailScreen() {
       .eq('id', clientId)
       .single();
     if (data) {
+      // Auto-detect gender from name; use DB value only if it was explicitly set to 'male'
+      // (all clients defaulted to 'female' so we re-derive from name to fix misclassified males)
+      const detected = guessGenderFromName(data.name);
+      const effectiveGender = detected === 'male' ? 'male' : (data.gender || 'female');
+      if (effectiveGender !== (data.gender || 'female')) {
+        supabase.from('clients').update({ gender: effectiveGender }).eq('id', data.id).then(() => {});
+      }
       setFormState({
         name: data.name,
         phone: data.phone || '',
         paymentType: data.payment_type || 'package',
-        gender: data.gender || 'female',
+        gender: effectiveGender,
         selectedDay: null,
         selectedTime: null,
         slots: (data.client_slots || []).map(s => ({ day: s.day_of_week, time: s.time_slot })),
@@ -96,7 +104,14 @@ export default function ClientDetailScreen() {
     if (key === 'name' || key === 'phone') {
       clearTimeout(autosaveTimerRef.current);
       autosaveTimerRef.current = setTimeout(() => {
-        supabase.from('clients').update({ [dbKey]: value.trim() }).eq('id', clientId).then(() => {});
+        const updates = { [dbKey]: value.trim() };
+        // Re-detect gender when name changes, unless user already manually picked 'male'
+        if (key === 'name') {
+          const detected = guessGenderFromName(value.trim());
+          updates.gender = detected;
+          setFormState(prev => ({ ...prev, gender: detected }));
+        }
+        supabase.from('clients').update(updates).eq('id', clientId).then(() => {});
       }, 700);
     } else {
       supabase.from('clients').update({ [dbKey]: value }).eq('id', clientId).then(() => {});
