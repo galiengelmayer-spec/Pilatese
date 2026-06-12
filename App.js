@@ -9,6 +9,8 @@ import LessonsScreen from './screens/LessonsScreen';
 import ClientsScreen from './screens/ClientsScreen';
 import DashboardScreen from './screens/DashboardScreen';
 import SettingsScreen from './screens/SettingsScreen';
+import LessonDetailScreen from './screens/LessonDetailScreen';
+import ClientDetailScreen from './screens/ClientDetailScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -75,6 +77,16 @@ export default function App() {
             headerTintColor: '#fff',
             headerTitleStyle: { fontWeight: 'bold' },
           }}
+        />
+        <Stack.Screen
+          name="LessonDetail"
+          component={LessonDetailScreen}
+          options={{ headerShown: false, animation: 'slide_from_right' }}
+        />
+        <Stack.Screen
+          name="ClientDetail"
+          component={ClientDetailScreen}
+          options={{ headerShown: false, animation: 'slide_from_right' }}
         />
       </Stack.Navigator>
     </NavigationContainer>

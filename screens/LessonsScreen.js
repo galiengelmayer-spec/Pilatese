@@ -1,14 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity,
-  StyleSheet, ActivityIndicator, LayoutAnimation, Platform, UIManager
+  StyleSheet, ActivityIndicator,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
 import { fetchSchedule, getSlotsForDay } from '../lib/studioSchedule';
-
-if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
 
 const DAY_NAMES = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
 const MAX_BEDS = 6;
@@ -53,7 +50,7 @@ function DayDivider({ date, dayOfWeek }) {
   );
 }
 
-function LessonRow({ lesson, expanded, onToggle, onToggleAttendance }) {
+function LessonRow({ lesson, onPress }) {
   const { date, dayOfWeek, timeSlot, isFuture, regularClients, attendance } = lesson;
 
   const dateObj = new Date(date + 'T12:00:00');
@@ -67,7 +64,9 @@ function LessonRow({ lesson, expanded, onToggle, onToggleAttendance }) {
   const regularIds = new Set(regularClients.map(cs => cs.client_id));
   const replacements = attendance.filter(a => !regularIds.has(a.client_id));
 
-  const presentCount = attendance.filter(a => a.status === 'present' || a.status === 'replacement').length;
+  const presentCount = attendance.filter(
+    a => a.status === 'present' || a.status === 'replacement'
+  ).length;
   const filledBeds = regularClients.length + replacements.length;
   const emptyBeds = Math.max(0, MAX_BEDS - filledBeds);
 
@@ -79,7 +78,9 @@ function LessonRow({ lesson, expanded, onToggle, onToggleAttendance }) {
       if (!isFuture) {
         if (!att) color = '#FFB300';
         else if (att.status === 'present') color = '#4CAF50';
-        else if (att.status === 'absent') color = '#F44336';
+        else if (att.status === 'absent')  color = '#F44336';
+        else if (att.status === 'planned_absent') color = '#BDBDBD';
+        else if (att.status === 'replaced_out')   color = '#E0E0E0';
       }
       beds.push(color);
     });
@@ -91,9 +92,12 @@ function LessonRow({ lesson, expanded, onToggle, onToggleAttendance }) {
   const beds = renderBeds();
 
   return (
-    <View style={[styles.card, isToday && styles.cardToday, expanded && styles.cardExpanded]}>
-      {/* Summary row — always visible */}
-      <TouchableOpacity style={styles.summary} onPress={onToggle} activeOpacity={0.7}>
+    <TouchableOpacity
+      style={[styles.card, isToday && styles.cardToday]}
+      onPress={onPress}
+      activeOpacity={0.7}
+    >
+      <View style={styles.summary}>
         <View style={styles.summaryLeft}>
           <Text style={[styles.timeText, isFuture && styles.dimText]}>{timeSlot}</Text>
           <View style={styles.bedRow}>
@@ -108,72 +112,16 @@ function LessonRow({ lesson, expanded, onToggle, onToggleAttendance }) {
             <Text style={styles.countText}>{presentCount}/{MAX_BEDS} הגיעו</Text>
           )}
         </View>
-        <Text style={styles.chevron}>{expanded ? '▲' : '▼'}</Text>
-      </TouchableOpacity>
-
-      {/* Expanded detail */}
-      {expanded && (
-        <View style={styles.detail}>
-          <View style={styles.divider} />
-
-          {regularClients.map(cs => {
-            const att = attMap[cs.client_id];
-            const name = cs.clients?.name;
-            let icon = '○', iconColor = '#BDBDBD', nameStyle = {};
-
-            if (!isFuture) {
-              if (!att) { icon = '?'; iconColor = '#FFB300'; }
-              else if (att.status === 'present') { icon = '✓'; iconColor = '#4CAF50'; }
-              else if (att.status === 'absent') { icon = '✗'; iconColor = '#F44336'; nameStyle = styles.strikethrough; }
-            }
-
-            return (
-              <TouchableOpacity
-                key={cs.client_id}
-                style={styles.clientRow}
-                onPress={() => !isFuture && onToggleAttendance(lesson, cs.client_id, att)}
-              >
-                <Text style={[styles.rowIcon, { color: iconColor }]}>{icon}</Text>
-                <Text style={[styles.clientName, nameStyle]}>{name}</Text>
-                {att?.paid && <Text style={styles.paidBadge}>₪</Text>}
-              </TouchableOpacity>
-            );
-          })}
-
-          {replacements.map(a => {
-            const original = regularClients.find(cs => {
-              const origAtt = attMap[cs.client_id];
-              return origAtt?.status === 'absent';
-            });
-            return (
-              <View key={a.client_id} style={[styles.clientRow, styles.replacementRow]}>
-                <Text style={[styles.rowIcon, { color: '#FF9800' }]}>⇄</Text>
-                <Text style={styles.clientName}>
-                  {original?.clients?.name
-                    ? `${original.clients.name} → ${a.clients?.name}`
-                    : a.clients?.name}
-                </Text>
-                {a.paid && <Text style={styles.paidBadge}>₪</Text>}
-              </View>
-            );
-          })}
-
-          {Array.from({ length: emptyBeds }).map((_, i) => (
-            <View key={`empty-${i}`} style={styles.clientRow}>
-              <Text style={[styles.rowIcon, { color: '#E0E0E0' }]}>○</Text>
-              <Text style={styles.emptySlot}>פנוי</Text>
-            </View>
-          ))}
-        </View>
-      )}
-    </View>
+        <Text style={styles.chevron}>›</Text>
+      </View>
+    </TouchableOpacity>
   );
 }
 
 export default function LessonsScreen() {
   const [lessons, setLessons] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [expandedId, setExpandedId] = useState(null);
+  const navigation = useNavigation();
   const listRef = useRef(null);
   const scrollTargetIdxRef = useRef(0);
 
@@ -264,37 +212,6 @@ export default function LessonsScreen() {
     setLoading(false);
   }
 
-  function toggleExpand(id) {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setExpandedId(prev => prev === id ? null : id);
-  }
-
-  async function handleToggleAttendance(lesson, clientId, existing) {
-    const { date, timeSlot } = lesson;
-
-    if (!existing) {
-      await supabase.from('attendance').insert({
-        lesson_date: date, time_slot: timeSlot, client_id: clientId, status: 'present', paid: false,
-      });
-    } else if (existing.status === 'present') {
-      await supabase.from('attendance').update({ status: 'absent' }).eq('id', existing.id);
-    } else {
-      await supabase.from('attendance').delete().eq('id', existing.id);
-    }
-
-    setLessons(prev => prev.map(l => {
-      if (l.id !== lesson.id) return l;
-      const clientInfo = l.regularClients.find(rc => rc.client_id === clientId)?.clients;
-      let newAtt = l.attendance.filter(a => a.client_id !== clientId);
-      if (!existing) {
-        newAtt = [...newAtt, { client_id: clientId, status: 'present', paid: false, clients: clientInfo }];
-      } else if (existing.status === 'present') {
-        newAtt = [...newAtt, { ...existing, status: 'absent' }];
-      }
-      return { ...l, attendance: newAtt };
-    }));
-  }
-
   if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#6C63FF" />;
 
   if (lessons.length === 0) {
@@ -321,9 +238,11 @@ export default function LessonsScreen() {
           return (
             <LessonRow
               lesson={item}
-              expanded={expandedId === item.id}
-              onToggle={() => toggleExpand(item.id)}
-              onToggleAttendance={handleToggleAttendance}
+              onPress={() => navigation.navigate('LessonDetail', {
+                date: item.date,
+                timeSlot: item.timeSlot,
+                dayOfWeek: item.dayOfWeek,
+              })}
             />
           );
         }}
@@ -352,7 +271,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   cardToday: { borderLeftColor: '#FF9800', borderLeftWidth: 5 },
-  cardExpanded: { borderLeftColor: '#6C63FF' },
 
   summary: {
     flexDirection: 'row', alignItems: 'center',
@@ -364,24 +282,10 @@ const styles = StyleSheet.create({
   dimText: { color: '#BDBDBD' },
   dateText: { fontSize: 13, color: '#555', fontWeight: '500' },
   countText: { fontSize: 12, color: '#888' },
-  chevron: { fontSize: 11, color: '#BDBDBD', marginLeft: 4 },
+  chevron: { fontSize: 18, color: '#BDBDBD', marginLeft: 4 },
 
   bedRow: { flexDirection: 'row', gap: 4 },
   bed: { width: 18, height: 10, borderRadius: 3 },
-
-  divider: { height: 1, backgroundColor: '#F0F0F0', marginHorizontal: 14 },
-  detail: { paddingHorizontal: 14, paddingBottom: 12, paddingTop: 4 },
-
-  clientRow: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 7, gap: 10,
-  },
-  replacementRow: { backgroundColor: '#FFF8F0', borderRadius: 8, paddingHorizontal: 6, marginTop: 2 },
-  rowIcon: { fontSize: 15, width: 22, textAlign: 'center' },
-  clientName: { flex: 1, fontSize: 14, color: '#333' },
-  strikethrough: { textDecorationLine: 'line-through', color: '#bbb' },
-  paidBadge: { fontSize: 12, color: '#4CAF50', fontWeight: 'bold' },
-  emptySlot: { fontSize: 13, color: '#BDBDBD', fontStyle: 'italic' },
 
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   emptyText: { fontSize: 18, fontWeight: '600', color: '#555' },
