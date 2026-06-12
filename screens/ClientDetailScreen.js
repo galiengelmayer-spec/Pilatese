@@ -10,6 +10,19 @@ import SlidePanel from '../components/SlidePanel';
 
 const DAYS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי'];
 
+function getUpcomingDates(dayOfWeek, count = 5) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const d = new Date(today);
+  d.setDate(d.getDate() + ((dayOfWeek - d.getDay() + 7) % 7));
+  const dates = [];
+  for (let i = 0; i < count; i++) {
+    dates.push(new Date(d));
+    d.setDate(d.getDate() + 7);
+  }
+  return dates;
+}
+
 const EMPTY_FORM = {
   name: '', phone: '', paymentType: 'package',
   selectedDay: null, selectedTime: null, slots: [],
@@ -24,6 +37,9 @@ export default function ClientDetailScreen() {
   const [form, setFormState] = useState(EMPTY_FORM);
   const [loading, setLoading] = useState(!!clientId);
   const [saving, setSaving] = useState(false);
+  const [absenceSlotIdx, setAbsenceSlotIdx] = useState(null);
+  const [absenceDate, setAbsenceDate] = useState(null);
+  const [savingAbsence, setSavingAbsence] = useState(false);
 
   useEffect(() => {
     if (clientId) loadClient();
@@ -105,6 +121,36 @@ export default function ClientDetailScreen() {
       Alert.alert('שגיאה', e.message || 'לא ניתן לשמור');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveAbsence() {
+    const absenceSlot = absenceSlotIdx !== null ? form.slots[absenceSlotIdx] : null;
+    if (!absenceSlot || !absenceDate) {
+      Alert.alert('בחרי שיעור ותאריך');
+      return;
+    }
+    setSavingAbsence(true);
+    try {
+      const { error: attErr } = await supabase.from('attendance').insert({
+        lesson_date: absenceDate, time_slot: absenceSlot.time,
+        client_id: clientId, status: 'planned_absent', paid: false,
+      });
+      if (attErr && attErr.code !== '23505') throw attErr;
+
+      const { error: subErr } = await supabase.from('substitutions').insert({
+        lesson_date: absenceDate, time_slot: absenceSlot.time,
+        absent_client_id: clientId, substitute_client_id: null,
+      });
+      if (subErr && subErr.code !== '23505') throw subErr;
+
+      Alert.alert('בוצע', 'ההיעדרות נרשמה');
+      setAbsenceSlotIdx(null);
+      setAbsenceDate(null);
+    } catch (e) {
+      Alert.alert('שגיאה', e.message || 'לא ניתן לשמור');
+    } finally {
+      setSavingAbsence(false);
     }
   }
 
@@ -226,6 +272,68 @@ export default function ClientDetailScreen() {
           : <Text style={styles.saveBtnText}>שמור</Text>
         }
       </TouchableOpacity>
+
+      {clientId && (
+        <>
+          <View style={styles.sectionDivider} />
+          <Text style={styles.sectionLabel}>היעדרות מתוכננת</Text>
+          {form.slots.length === 0 ? (
+            <Text style={styles.pickerHint}>הוסיפי משבצות ושמרי כדי לרשום היעדרות</Text>
+          ) : (
+            <>
+              <Text style={styles.pickerLabel}>שיעור</Text>
+              <View style={styles.pillRow}>
+                {form.slots.map((s, i) => (
+                  <TouchableOpacity key={i}
+                    style={[styles.pill, absenceSlotIdx === i && styles.pillActive]}
+                    onPress={() => {
+                      setAbsenceSlotIdx(absenceSlotIdx === i ? null : i);
+                      setAbsenceDate(null);
+                    }}
+                  >
+                    <Text style={[styles.pillText, absenceSlotIdx === i && styles.pillTextActive]}>
+                      {DAYS[s.day]} {s.time}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {absenceSlotIdx !== null && (
+                <>
+                  <Text style={styles.pickerLabel}>תאריך</Text>
+                  <View style={styles.pillRow}>
+                    {getUpcomingDates(form.slots[absenceSlotIdx].day).map(d => {
+                      const ds = d.toISOString().split('T')[0];
+                      const label = d.toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' });
+                      return (
+                        <TouchableOpacity key={ds}
+                          style={[styles.pill, absenceDate === ds && styles.pillActive]}
+                          onPress={() => setAbsenceDate(absenceDate === ds ? null : ds)}
+                        >
+                          <Text style={[styles.pillText, absenceDate === ds && styles.pillTextActive]}>
+                            {label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </>
+              )}
+
+              <TouchableOpacity
+                style={[styles.absenceBtn, (absenceSlotIdx === null || !absenceDate || savingAbsence) && styles.saveBtnDisabled]}
+                onPress={saveAbsence}
+                disabled={absenceSlotIdx === null || !absenceDate || savingAbsence}
+              >
+                {savingAbsence
+                  ? <ActivityIndicator color="#fff" />
+                  : <Text style={styles.saveBtnText}>רשום היעדרות</Text>
+                }
+              </TouchableOpacity>
+            </>
+          )}
+        </>
+      )}
     </SlidePanel>
   );
 }
@@ -271,4 +379,9 @@ const styles = StyleSheet.create({
   },
   saveBtnDisabled: { opacity: 0.6 },
   saveBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
+  sectionDivider: { height: 1, backgroundColor: '#E8E4F8', marginVertical: 20 },
+  absenceBtn: {
+    backgroundColor: '#FF9800', borderRadius: 12,
+    padding: 13, alignItems: 'center', marginTop: 12,
+  },
 });
