@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Platform, StyleSheet } from 'react-native';
+import { View, Platform, StyleSheet, useWindowDimensions } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
@@ -11,6 +11,8 @@ import DashboardScreen from './screens/DashboardScreen';
 const Tab = createBottomTabNavigator();
 
 export default function App() {
+  const { width } = useWindowDimensions();
+  const isDesktop = Platform.OS === 'web' && width > 500;
   const nav = (
     <NavigationContainer>
       <Tab.Navigator
@@ -38,7 +40,7 @@ export default function App() {
     </NavigationContainer>
   );
 
-  if (Platform.OS === 'web') {
+  if (isDesktop) {
     return (
       <View style={styles.webOuter}>
         <View style={styles.webPhone}>{nav}</View>
