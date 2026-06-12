@@ -215,27 +215,28 @@ export default function LessonDetailScreen() {
     try {
       await supabase.from('attendance').update({ status: 'replaced_out' }).eq('id', origAtt.id);
 
+      // upsert so a pre-existing attendance row doesn't throw a UNIQUE conflict
       const { data: insertedRow, error: subErr } = await supabase
         .from('attendance')
-        .insert({
+        .upsert({
           lesson_date: date, time_slot: timeSlot,
           client_id: substituteClient.id, status: 'replacement', paid: false,
-        })
+        }, { onConflict: 'lesson_date,time_slot,client_id' })
         .select('id')
         .single();
       if (subErr) throw subErr;
 
-      // Swap temp ID for real one
       if (insertedRow?.id) {
         setAttendanceRecs(prev => prev.map(a =>
           a.id === '__temp__' ? { ...a, id: insertedRow.id } : a
         ));
       }
 
-      const { error: linkErr } = await supabase.from('substitutions').insert({
+      // upsert so re-selecting a replacement for the same slot doesn't conflict
+      const { error: linkErr } = await supabase.from('substitutions').upsert({
         lesson_date: date, time_slot: timeSlot,
         absent_client_id: absentId, substitute_client_id: substituteClient.id,
-      });
+      }, { onConflict: 'lesson_date,time_slot,absent_client_id' });
       if (linkErr) throw linkErr;
     } catch (e) {
       // Revert optimistic update
@@ -253,9 +254,11 @@ export default function LessonDetailScreen() {
     }
   }
 
+  // Exclude anyone who already has ANY attendance record for this lesson —
+  // inserting a second record for them would hit the UNIQUE constraint.
   const replacementExcludes = new Set([
     ...displayedRegulars.map(cs => cs.client_id),
-    ...attendanceRecs.filter(a => a.status === 'replacement').map(a => a.client_id),
+    ...attendanceRecs.map(a => a.client_id),
   ]);
   const filteredAllClients = allClients.filter(c =>
     !replacementExcludes.has(c.id) &&

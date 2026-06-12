@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity,
+  View, Text, TextInput, TouchableOpacity, ScrollView,
   StyleSheet, ActivityIndicator, Alert,
 } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
@@ -11,17 +11,23 @@ import SlidePanel from '../components/SlidePanel';
 
 const DAYS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי'];
 
-function getUpcomingDates(dayOfWeek, count = 5) {
+// All upcoming occurrence-dates for the client's slots (next `weeks` weeks), sorted.
+function getAbsenceDates(slots, weeks = 6) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const d = new Date(today);
-  d.setDate(d.getDate() + ((dayOfWeek - d.getDay() + 7) % 7));
-  const dates = [];
-  for (let i = 0; i < count; i++) {
-    dates.push(new Date(d));
-    d.setDate(d.getDate() + 7);
+  const seen = new Set();
+  const result = [];
+  for (const slot of slots) {
+    const d = new Date(today);
+    const diff = (slot.day - d.getDay() + 7) % 7;
+    d.setDate(d.getDate() + diff === 0 ? 0 : diff); // include today if matches
+    for (let i = 0; i < weeks; i++) {
+      const ds = d.toISOString().split('T')[0];
+      if (!seen.has(ds)) { seen.add(ds); result.push(ds); }
+      d.setDate(d.getDate() + 7);
+    }
   }
-  return dates;
+  return result.sort();
 }
 
 const EMPTY_FORM = {
@@ -39,8 +45,11 @@ export default function ClientDetailScreen() {
   const [form, setFormState] = useState(EMPTY_FORM);
   const [loading, setLoading] = useState(!!clientId);
   const [saving, setSaving] = useState(false);
-  const [absenceSlotIdx, setAbsenceSlotIdx] = useState(null);
-  const [absenceDate, setAbsenceDate] = useState(null);
+
+  // Absence modal state
+  const [absenceModal, setAbsenceModal] = useState(false);
+  const [absenceFrom, setAbsenceFrom] = useState(null);
+  const [absenceTo, setAbsenceTo] = useState(null);
   const [savingAbsence, setSavingAbsence] = useState(false);
 
   useEffect(() => {
@@ -126,29 +135,43 @@ export default function ClientDetailScreen() {
     }
   }
 
-  async function saveAbsence() {
-    const absenceSlot = absenceSlotIdx !== null ? form.slots[absenceSlotIdx] : null;
-    if (!absenceSlot || !absenceDate) {
-      Alert.alert('בחרי שיעור ותאריך');
-      return;
-    }
+  // Save planned_absent for every one of the client's lesson slots within [absenceFrom, absenceTo]
+  async function saveAbsenceRange() {
+    if (!absenceFrom || !absenceTo || !clientId) return;
     setSavingAbsence(true);
     try {
-      const { error: attErr } = await supabase.from('attendance').insert({
-        lesson_date: absenceDate, time_slot: absenceSlot.time,
-        client_id: clientId, status: 'planned_absent', paid: false,
-      });
-      if (attErr && attErr.code !== '23505') throw attErr;
-
-      const { error: subErr } = await supabase.from('substitutions').insert({
-        lesson_date: absenceDate, time_slot: absenceSlot.time,
+      const from = new Date(absenceFrom + 'T00:00:00');
+      const to = new Date(absenceTo + 'T23:59:59');
+      const records = [];
+      for (const slot of form.slots) {
+        const d = new Date(from);
+        // Advance to the first occurrence of slot.day on or after `from`
+        while (d.getDay() !== slot.day) d.setDate(d.getDate() + 1);
+        while (d <= to) {
+          records.push({
+            lesson_date: d.toISOString().split('T')[0],
+            time_slot: slot.time,
+            client_id: clientId,
+            status: 'planned_absent',
+            paid: false,
+          });
+          d.setDate(d.getDate() + 7);
+        }
+      }
+      if (records.length === 0) {
+        Alert.alert('', 'לא נמצאו שיעורים בטווח זה');
+        return;
+      }
+      await supabase.from('attendance').upsert(records, { onConflict: 'lesson_date,time_slot,client_id' });
+      const subRecords = records.map(r => ({
+        lesson_date: r.lesson_date, time_slot: r.time_slot,
         absent_client_id: clientId, substitute_client_id: null,
-      });
-      if (subErr && subErr.code !== '23505') throw subErr;
-
-      Alert.alert('בוצע', 'ההיעדרות נרשמה');
-      setAbsenceSlotIdx(null);
-      setAbsenceDate(null);
+      }));
+      await supabase.from('substitutions').upsert(subRecords, { onConflict: 'lesson_date,time_slot,absent_client_id' });
+      Alert.alert('בוצע', `${records.length} שיעורים סומנו כהיעדרות מתוכננת`);
+      setAbsenceModal(false);
+      setAbsenceFrom(null);
+      setAbsenceTo(null);
     } catch (e) {
       Alert.alert('שגיאה', e.message || 'לא ניתן לשמור');
     } finally {
@@ -160,242 +183,275 @@ export default function ClientDetailScreen() {
 
   if (loading) {
     return (
-      <SlidePanel title={title}>
-        <ActivityIndicator color="#6C63FF" style={{ marginTop: 40 }} />
-      </SlidePanel>
+      <View style={{ flex: 1 }}>
+        <SlidePanel title={title}>
+          <ActivityIndicator color="#6C63FF" style={{ marginTop: 40 }} />
+        </SlidePanel>
+      </View>
     );
   }
 
   const daySlots = form.selectedDay !== null ? getSlotsForDay(schedule, form.selectedDay) : [];
   const morning = daySlots.filter(s => s.start_time < '12:00');
   const evening = daySlots.filter(s => s.start_time >= '12:00');
+  const absenceDates = getAbsenceDates(form.slots);
 
   return (
-    <SlidePanel title={title}>
-      <TextInput
-        style={styles.input} placeholder="שם" value={form.name}
-        onChangeText={v => set('name', v)} textAlign="right"
-      />
-      <TextInput
-        style={styles.input} placeholder="טלפון" value={form.phone}
-        onChangeText={v => set('phone', v)} keyboardType="phone-pad" textAlign="right"
-      />
+    <View style={{ flex: 1 }}>
+      <SlidePanel title={title}>
+        <TextInput
+          style={styles.input} placeholder="שם" value={form.name}
+          onChangeText={v => set('name', v)} textAlign="right"
+        />
+        <TextInput
+          style={styles.input} placeholder="טלפון" value={form.phone}
+          onChangeText={v => set('phone', v)} keyboardType="phone-pad" textAlign="right"
+        />
 
-      <Text style={styles.sectionLabel}>סוג תשלום</Text>
-      <View style={styles.toggle}>
-        {['package', 'per_visit'].map(type => (
-          <TouchableOpacity
-            key={type}
-            style={[styles.toggleBtn, form.paymentType === type && styles.toggleBtnActive]}
-            onPress={() => set('paymentType', type)}
-          >
-            <Text style={[styles.toggleText, form.paymentType === type && styles.toggleTextActive]}>
-              {type === 'package' ? 'כרטיסיה' : 'לפי ביקור'}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <Text style={styles.sectionLabel}>משבצות שבועיות</Text>
-      {form.slots.length > 0 && (
-        <View style={styles.chipRow}>
-          {form.slots.map((s, i) => (
-            <TouchableOpacity key={i} style={styles.chip} onPress={() => removeSlot(i)}>
-              <Text style={styles.chipText}>{DAYS[s.day]} {s.time} ×</Text>
+        <Text style={styles.sectionLabel}>סוג תשלום</Text>
+        <View style={styles.toggle}>
+          {['package', 'per_visit'].map(type => (
+            <TouchableOpacity
+              key={type}
+              style={[styles.toggleBtn, form.paymentType === type && styles.toggleBtnActive]}
+              onPress={() => set('paymentType', type)}
+            >
+              <Text style={[styles.toggleText, form.paymentType === type && styles.toggleTextActive]}>
+                {type === 'package' ? 'כרטיסיה' : 'לפי ביקור'}
+              </Text>
             </TouchableOpacity>
           ))}
         </View>
-      )}
 
-      <Text style={styles.pickerLabel}>יום</Text>
-      <View style={styles.pillRow}>
-        {DAYS.map((d, i) => (
-          <TouchableOpacity key={i}
-            style={[styles.pill, form.selectedDay === i && styles.pillActive]}
-            onPress={() => set('selectedDay', form.selectedDay === i ? null : i)}
-          >
-            <Text style={[styles.pillText, form.selectedDay === i && styles.pillTextActive]}>{d}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {morning.length > 0 && (
-        <>
-          <Text style={styles.pickerLabel}>☀️ בוקר</Text>
-          <View style={styles.pillRow}>
-            {morning.map(s => (
-              <TouchableOpacity key={s.start_time}
-                style={[styles.pill, form.selectedTime === s.start_time && styles.pillActive]}
-                onPress={() => set('selectedTime', form.selectedTime === s.start_time ? null : s.start_time)}
-              >
-                <Text style={[styles.pillText, form.selectedTime === s.start_time && styles.pillTextActive]}>
-                  {s.start_time}
-                </Text>
+        <Text style={styles.sectionLabel}>משבצות שבועיות</Text>
+        {form.slots.length > 0 && (
+          <View style={styles.chipRow}>
+            {form.slots.map((s, i) => (
+              <TouchableOpacity key={i} style={styles.chip} onPress={() => removeSlot(i)}>
+                <Text style={styles.chipText}>{DAYS[s.day]} {s.time} ×</Text>
               </TouchableOpacity>
             ))}
           </View>
-        </>
-      )}
-      {evening.length > 0 && (
-        <>
-          <Text style={styles.pickerLabel}>🌙 ערב</Text>
-          <View style={styles.pillRow}>
-            {evening.map(s => (
-              <TouchableOpacity key={s.start_time}
-                style={[styles.pill, form.selectedTime === s.start_time && styles.pillActive]}
-                onPress={() => set('selectedTime', form.selectedTime === s.start_time ? null : s.start_time)}
-              >
-                <Text style={[styles.pillText, form.selectedTime === s.start_time && styles.pillTextActive]}>
-                  {s.start_time}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </>
-      )}
-      {form.selectedDay !== null && daySlots.length === 0 && (
-        <Text style={styles.pickerHint}>אין שיעורים מוגדרים ליום זה</Text>
-      )}
-      {form.selectedDay === null && (
-        <Text style={styles.pickerHint}>בחרי יום כדי לראות שעות זמינות</Text>
-      )}
+        )}
 
-      <TouchableOpacity style={styles.addSlotBtn} onPress={addSlot}>
-        <Text style={styles.addSlotText}>+ הוסף משבצת</Text>
-      </TouchableOpacity>
+        <Text style={styles.pickerLabel}>יום</Text>
+        <View style={styles.pillRow}>
+          {DAYS.map((d, i) => (
+            <TouchableOpacity key={i}
+              style={[styles.pill, form.selectedDay === i && styles.pillActive]}
+              onPress={() => set('selectedDay', form.selectedDay === i ? null : i)}
+            >
+              <Text style={[styles.pillText, form.selectedDay === i && styles.pillTextActive]}>{d}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
 
-      <TouchableOpacity
-        style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
-        onPress={saveClient}
-        disabled={saving}
-      >
-        {saving
-          ? <ActivityIndicator color="#fff" />
-          : <Text style={styles.saveBtnText}>שמור</Text>
-        }
-      </TouchableOpacity>
+        {morning.length > 0 && (
+          <>
+            <Text style={styles.pickerLabel}>☀️ בוקר</Text>
+            <View style={styles.pillRow}>
+              {morning.map(s => (
+                <TouchableOpacity key={s.start_time}
+                  style={[styles.pill, form.selectedTime === s.start_time && styles.pillActive]}
+                  onPress={() => set('selectedTime', form.selectedTime === s.start_time ? null : s.start_time)}
+                >
+                  <Text style={[styles.pillText, form.selectedTime === s.start_time && styles.pillTextActive]}>
+                    {s.start_time}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>
+        )}
+        {evening.length > 0 && (
+          <>
+            <Text style={styles.pickerLabel}>🌙 ערב</Text>
+            <View style={styles.pillRow}>
+              {evening.map(s => (
+                <TouchableOpacity key={s.start_time}
+                  style={[styles.pill, form.selectedTime === s.start_time && styles.pillActive]}
+                  onPress={() => set('selectedTime', form.selectedTime === s.start_time ? null : s.start_time)}
+                >
+                  <Text style={[styles.pillText, form.selectedTime === s.start_time && styles.pillTextActive]}>
+                    {s.start_time}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>
+        )}
+        {form.selectedDay !== null && daySlots.length === 0 && (
+          <Text style={styles.pickerHint}>אין שיעורים מוגדרים ליום זה</Text>
+        )}
+        {form.selectedDay === null && (
+          <Text style={styles.pickerHint}>בחרי יום כדי לראות שעות זמינות</Text>
+        )}
 
-      {clientId && (
-        <>
-          <View style={styles.sectionDivider} />
-          <Text style={styles.sectionLabel}>היעדרות מתוכננת</Text>
-          {form.slots.length === 0 ? (
-            <Text style={styles.pickerHint}>הוסיפי משבצות ושמרי כדי לרשום היעדרות</Text>
-          ) : (
-            <>
-              <Text style={styles.pickerLabel}>שיעור</Text>
-              <View style={styles.pillRow}>
-                {form.slots.map((s, i) => (
-                  <TouchableOpacity key={i}
-                    style={[styles.pill, absenceSlotIdx === i && styles.pillActive]}
-                    onPress={() => {
-                      setAbsenceSlotIdx(absenceSlotIdx === i ? null : i);
-                      setAbsenceDate(null);
-                    }}
-                  >
-                    <Text style={[styles.pillText, absenceSlotIdx === i && styles.pillTextActive]}>
-                      {DAYS[s.day]} {s.time}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+        <TouchableOpacity style={styles.addSlotBtn} onPress={addSlot}>
+          <Text style={styles.addSlotText}>+ הוסף משבצת</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
+          onPress={saveClient}
+          disabled={saving}
+        >
+          {saving
+            ? <ActivityIndicator color="#fff" />
+            : <Text style={styles.saveBtnText}>שמור</Text>
+          }
+        </TouchableOpacity>
+
+        {/* ── Absence button ── */}
+        {clientId && form.slots.length > 0 && (
+          <>
+            <View style={styles.sectionDivider} />
+            <Text style={styles.sectionLabel}>היעדרות מתוכננת</Text>
+            <TouchableOpacity style={styles.absenceBtn} onPress={() => setAbsenceModal(true)}>
+              <Text style={styles.saveBtnText}>הוסף העדרות</Text>
+            </TouchableOpacity>
+          </>
+        )}
+
+        {/* ── Cycle history ── */}
+        {clientId && (
+          <>
+            <View style={styles.sectionDivider} />
+            {!loadingCycles && cycles.some(c => c.payments?.[0]?.status === 'unpaid') && (
+              <View style={styles.debtBanner}>
+                <Text style={styles.debtBannerText}>יתרה לתשלום</Text>
               </View>
-
-              {absenceSlotIdx !== null && (
-                <>
-                  <Text style={styles.pickerLabel}>תאריך</Text>
-                  <View style={styles.pillRow}>
-                    {getUpcomingDates(form.slots[absenceSlotIdx].day).map(d => {
-                      const ds = d.toISOString().split('T')[0];
-                      const label = d.toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' });
-                      return (
-                        <TouchableOpacity key={ds}
-                          style={[styles.pill, absenceDate === ds && styles.pillActive]}
-                          onPress={() => setAbsenceDate(absenceDate === ds ? null : ds)}
+            )}
+            <Text style={styles.sectionLabel}>מחזורים</Text>
+            {loadingCycles ? (
+              <ActivityIndicator color="#6C63FF" style={{ marginVertical: 12 }} />
+            ) : cycles.length === 0 ? (
+              <Text style={styles.pickerHint}>אין פעילות עדיין</Text>
+            ) : (
+              cycles.map((cycle, idx) => {
+                const payment = cycle.payments?.[0];
+                const isPaid = payment?.status === 'paid';
+                const isActive = !cycle.completed_at;
+                const cycleNum = cycles.length - idx;
+                const startStr = cycle.started_at
+                  ? new Date(cycle.started_at + 'T12:00').toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric', year: 'numeric' })
+                  : '';
+                const endStr = cycle.completed_at
+                  ? new Date(cycle.completed_at + 'T12:00').toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric', year: 'numeric' })
+                  : null;
+                return (
+                  <View key={cycle.id} style={[styles.cycleRow, isActive && styles.cycleRowActive]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.cycleTitle}>
+                        {isActive
+                          ? `מחזור פעיל: ${cycle.sessions_used} / ${cycle.sessions_max}`
+                          : `מחזור ${cycleNum} · ${cycle.sessions_used}/${cycle.sessions_max}`
+                        }
+                      </Text>
+                      {startStr ? (
+                        <Text style={styles.cycleRange}>
+                          {startStr}{endStr ? ` – ${endStr}` : ''}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {isPaid ? (
+                      <Text style={styles.paidLabel}>
+                        {'שולם ✓'}
+                        {payment.paid_at
+                          ? ` · ${new Date(payment.paid_at).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' })}`
+                          : ''}
+                      </Text>
+                    ) : payment ? (
+                      <View style={styles.unpaidActions}>
+                        <View style={styles.unpaidBadge}>
+                          <Text style={styles.unpaidBadgeText}>יתרה לתשלום</Text>
+                        </View>
+                        <TouchableOpacity
+                          style={styles.markPaidBtn}
+                          onPress={() => handleMarkPaid(payment.id)}
                         >
-                          <Text style={[styles.pillText, absenceDate === ds && styles.pillTextActive]}>
-                            {label}
-                          </Text>
+                          <Text style={styles.markPaidBtnText}>סמן כשולם</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+                  </View>
+                );
+              })
+            )}
+          </>
+        )}
+      </SlidePanel>
+
+      {/* ── Absence date-range modal ── */}
+      {absenceModal && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.modal}>
+            <Text style={styles.modalTitle}>הוסף העדרות</Text>
+
+            <Text style={styles.modalLabel}>מתאריך</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.dateScroll}>
+              <View style={styles.pillRow}>
+                {absenceDates.map(d => {
+                  const label = new Date(d + 'T12:00').toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' });
+                  const active = absenceFrom === d;
+                  return (
+                    <TouchableOpacity key={d}
+                      style={[styles.pill, active && styles.pillActive]}
+                      onPress={() => {
+                        setAbsenceFrom(d);
+                        if (absenceTo && d > absenceTo) setAbsenceTo(null);
+                      }}
+                    >
+                      <Text style={[styles.pillText, active && styles.pillTextActive]}>{label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </ScrollView>
+
+            {absenceFrom && (
+              <>
+                <Text style={styles.modalLabel}>עד תאריך</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.dateScroll}>
+                  <View style={styles.pillRow}>
+                    {absenceDates.filter(d => d >= absenceFrom).map(d => {
+                      const label = new Date(d + 'T12:00').toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' });
+                      const active = absenceTo === d;
+                      return (
+                        <TouchableOpacity key={d}
+                          style={[styles.pill, active && styles.pillActive]}
+                          onPress={() => setAbsenceTo(d)}
+                        >
+                          <Text style={[styles.pillText, active && styles.pillTextActive]}>{label}</Text>
                         </TouchableOpacity>
                       );
                     })}
                   </View>
-                </>
-              )}
+                </ScrollView>
+              </>
+            )}
 
-              <TouchableOpacity
-                style={[styles.absenceBtn, (absenceSlotIdx === null || !absenceDate || savingAbsence) && styles.saveBtnDisabled]}
-                onPress={saveAbsence}
-                disabled={absenceSlotIdx === null || !absenceDate || savingAbsence}
-              >
-                {savingAbsence
-                  ? <ActivityIndicator color="#fff" />
-                  : <Text style={styles.saveBtnText}>רשום היעדרות</Text>
-                }
-              </TouchableOpacity>
-            </>
-          )}
-        </>
-      )}
+            <TouchableOpacity
+              style={[styles.saveBtn, (!absenceFrom || !absenceTo || savingAbsence) && styles.saveBtnDisabled, { marginTop: 16 }]}
+              onPress={saveAbsenceRange}
+              disabled={!absenceFrom || !absenceTo || savingAbsence}
+            >
+              {savingAbsence
+                ? <ActivityIndicator color="#fff" />
+                : <Text style={styles.saveBtnText}>אישור</Text>
+              }
+            </TouchableOpacity>
 
-      {clientId && (
-        <>
-          <View style={styles.sectionDivider} />
-          {!loadingCycles && cycles.some(c => c.payments?.[0]?.status === 'unpaid') && (
-            <View style={styles.debtBanner}>
-              <Text style={styles.debtBannerText}>יתרה לתשלום</Text>
-            </View>
-          )}
-          <Text style={styles.sectionLabel}>היסטוריית כרטיסיות</Text>
-          {loadingCycles ? (
-            <ActivityIndicator color="#6C63FF" style={{ marginVertical: 12 }} />
-          ) : cycles.length === 0 ? (
-            <Text style={styles.pickerHint}>אין פעילות עדיין</Text>
-          ) : (
-            cycles.map((cycle, idx) => {
-              const payment = cycle.payments?.[0];
-              const isPaid = payment?.status === 'paid';
-              const cycleNum = cycles.length - idx;
-              const startStr = cycle.started_at
-                ? new Date(cycle.started_at).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric', year: 'numeric' })
-                : '';
-              const endStr = cycle.completed_at
-                ? new Date(cycle.completed_at).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric', year: 'numeric' })
-                : 'פעיל';
-              return (
-                <View key={cycle.id} style={styles.cycleRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.cycleTitle}>
-                      כרטיסיה {cycleNum} · {cycle.sessions_used}/{cycle.sessions_max} שיעורים
-                    </Text>
-                    <Text style={styles.cycleRange}>{startStr} – {endStr}</Text>
-                  </View>
-                  {isPaid ? (
-                    <Text style={styles.paidLabel}>
-                      {'✓ שולם'}
-                      {payment.paid_at
-                        ? ` · ${new Date(payment.paid_at).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' })}`
-                        : ''}
-                    </Text>
-                  ) : payment ? (
-                    <View style={styles.unpaidActions}>
-                      <View style={styles.unpaidBadge}>
-                        <Text style={styles.unpaidBadgeText}>יתרה לתשלום</Text>
-                      </View>
-                      <TouchableOpacity
-                        style={styles.markPaidBtn}
-                        onPress={() => handleMarkPaid(payment.id)}
-                      >
-                        <Text style={styles.markPaidBtnText}>סמן כשולם</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : null}
-                </View>
-              );
-            })
-          )}
-        </>
+            <TouchableOpacity
+              style={styles.cancelBtn}
+              onPress={() => { setAbsenceModal(false); setAbsenceFrom(null); setAbsenceTo(null); }}
+            >
+              <Text style={styles.cancelBtnText}>ביטול</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       )}
-    </SlidePanel>
+    </View>
   );
 }
 
@@ -443,7 +499,7 @@ const styles = StyleSheet.create({
   sectionDivider: { height: 1, backgroundColor: '#E8E4F8', marginVertical: 20 },
   absenceBtn: {
     backgroundColor: '#FF9800', borderRadius: 12,
-    padding: 13, alignItems: 'center', marginTop: 12,
+    padding: 13, alignItems: 'center', marginTop: 4,
   },
 
   debtBanner: {
@@ -458,6 +514,7 @@ const styles = StyleSheet.create({
     padding: 12, marginBottom: 8, gap: 8,
     shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, elevation: 1,
   },
+  cycleRowActive: { borderLeftWidth: 3, borderLeftColor: '#6C63FF' },
   cycleTitle: { fontSize: 14, fontWeight: '600', color: '#333', textAlign: 'right' },
   cycleRange: { fontSize: 12, color: '#999', marginTop: 2, textAlign: 'right' },
   paidLabel: { fontSize: 12, color: '#4CAF50', fontWeight: '600' },
@@ -472,4 +529,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 6,
   },
   markPaidBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+
+  // ── Absence modal ──────────────────────────────────────────
+  modalOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end', zIndex: 200,
+  },
+  modal: {
+    backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    padding: 20, paddingBottom: 32,
+  },
+  modalTitle: {
+    fontSize: 18, fontWeight: 'bold', textAlign: 'center', marginBottom: 14, color: '#333',
+  },
+  modalLabel: { fontSize: 13, color: '#888', marginBottom: 6, textAlign: 'right' },
+  dateScroll: { marginBottom: 4 },
+  cancelBtn: { marginTop: 10, padding: 14, alignItems: 'center' },
+  cancelBtnText: { fontSize: 15, color: '#999' },
 });
