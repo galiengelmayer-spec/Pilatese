@@ -35,7 +35,7 @@ export default function ClientDetailScreen() {
   const clientId = params?.clientId ?? null;
 
   const { schedule } = useStudioSchedule();
-  const { cycles, handleMarkPaid } = useClientPayments(clientId);
+  const { cycles, loadingCycles, handleMarkPaid } = useClientPayments(clientId);
   const [form, setFormState] = useState(EMPTY_FORM);
   const [loading, setLoading] = useState(!!clientId);
   const [saving, setSaving] = useState(false);
@@ -337,56 +337,62 @@ export default function ClientDetailScreen() {
         </>
       )}
 
-      {clientId && cycles.length > 0 && (
+      {clientId && (
         <>
           <View style={styles.sectionDivider} />
-          {cycles.some(c => c.payments?.[0]?.status === 'unpaid') && (
+          {!loadingCycles && cycles.some(c => c.payments?.[0]?.status === 'unpaid') && (
             <View style={styles.debtBanner}>
               <Text style={styles.debtBannerText}>יתרה לתשלום</Text>
             </View>
           )}
-          <Text style={styles.sectionLabel}>כרטיסיות</Text>
-          {cycles.map((cycle, idx) => {
-            const payment = cycle.payments?.[0];
-            const isPaid = payment?.status === 'paid';
-            const cycleNum = cycles.length - idx;
-            const startStr = cycle.started_at
-              ? new Date(cycle.started_at).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric', year: 'numeric' })
-              : '';
-            const endStr = cycle.completed_at
-              ? new Date(cycle.completed_at).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric', year: 'numeric' })
-              : 'פעיל';
-            return (
-              <View key={cycle.id} style={styles.cycleRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.cycleTitle}>
-                    כרטיסיה {cycleNum} · {cycle.sessions_used}/{cycle.sessions_max} שיעורים
-                  </Text>
-                  <Text style={styles.cycleRange}>{startStr} – {endStr}</Text>
-                </View>
-                {isPaid ? (
-                  <Text style={styles.paidLabel}>
-                    {'✓ שולם'}
-                    {payment.paid_at
-                      ? ` · ${new Date(payment.paid_at).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' })}`
-                      : ''}
-                  </Text>
-                ) : payment ? (
-                  <View style={styles.unpaidActions}>
-                    <View style={styles.unpaidBadge}>
-                      <Text style={styles.unpaidBadgeText}>יתרה לתשלום</Text>
-                    </View>
-                    <TouchableOpacity
-                      style={styles.markPaidBtn}
-                      onPress={() => handleMarkPaid(payment.id)}
-                    >
-                      <Text style={styles.markPaidBtnText}>סמן כשולם</Text>
-                    </TouchableOpacity>
+          <Text style={styles.sectionLabel}>היסטוריית כרטיסיות</Text>
+          {loadingCycles ? (
+            <ActivityIndicator color="#6C63FF" style={{ marginVertical: 12 }} />
+          ) : cycles.length === 0 ? (
+            <Text style={styles.pickerHint}>אין פעילות עדיין</Text>
+          ) : (
+            cycles.map((cycle, idx) => {
+              const payment = cycle.payments?.[0];
+              const isPaid = payment?.status === 'paid';
+              const cycleNum = cycles.length - idx;
+              const startStr = cycle.started_at
+                ? new Date(cycle.started_at).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric', year: 'numeric' })
+                : '';
+              const endStr = cycle.completed_at
+                ? new Date(cycle.completed_at).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric', year: 'numeric' })
+                : 'פעיל';
+              return (
+                <View key={cycle.id} style={styles.cycleRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.cycleTitle}>
+                      כרטיסיה {cycleNum} · {cycle.sessions_used}/{cycle.sessions_max} שיעורים
+                    </Text>
+                    <Text style={styles.cycleRange}>{startStr} – {endStr}</Text>
                   </View>
-                ) : null}
-              </View>
-            );
-          })}
+                  {isPaid ? (
+                    <Text style={styles.paidLabel}>
+                      {'✓ שולם'}
+                      {payment.paid_at
+                        ? ` · ${new Date(payment.paid_at).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' })}`
+                        : ''}
+                    </Text>
+                  ) : payment ? (
+                    <View style={styles.unpaidActions}>
+                      <View style={styles.unpaidBadge}>
+                        <Text style={styles.unpaidBadgeText}>יתרה לתשלום</Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.markPaidBtn}
+                        onPress={() => handleMarkPaid(payment.id)}
+                      >
+                        <Text style={styles.markPaidBtnText}>סמן כשולם</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })
+          )}
         </>
       )}
     </SlidePanel>
