@@ -23,6 +23,10 @@ function StatusPill({ label, active, color, onPress, loading }) {
   );
 }
 
+function arrivedLabel(gender) { return gender === 'male' ? 'הגיע' : 'הגיעה'; }
+function didntLabel(gender)   { return gender === 'male' ? 'לא הגיע' : 'לא הגיעה'; }
+function replaceVerb(gender)  { return gender === 'male' ? 'מחליף' : 'מחליפה'; }
+
 export default function LessonDetailScreen() {
   const { params } = useRoute();
   const { date, timeSlot, dayOfWeek } = params;
@@ -55,12 +59,12 @@ export default function LessonDetailScreen() {
     const [slotsRes, attRes, subsRes] = await Promise.all([
       supabase
         .from('client_slots')
-        .select('client_id, clients(id, name)')
+        .select('client_id, clients(id, name, gender)')
         .eq('day_of_week', dayOfWeek)
         .eq('time_slot', timeSlot),
       supabase
         .from('attendance')
-        .select('id, client_id, status, paid, clients(id, name)')
+        .select('id, client_id, status, paid, clients(id, name, gender)')
         .eq('lesson_date', date)
         .eq('time_slot', timeSlot),
       supabase
@@ -85,7 +89,7 @@ export default function LessonDetailScreen() {
         );
         const { data: refreshed } = await supabase
           .from('attendance')
-          .select('id, client_id, status, paid, clients(id, name)')
+          .select('id, client_id, status, paid, clients(id, name, gender)')
           .eq('lesson_date', date)
           .eq('time_slot', timeSlot);
         atts = refreshed || [];
@@ -108,7 +112,6 @@ export default function LessonDetailScreen() {
   const displayedRegulars = regularClients.slice(0, MAX_BEDS);
   const emptyBeds = Math.max(0, MAX_BEDS - displayedRegulars.length);
 
-  // Count occupied beds: present + replaced_out (substitute is physically in the bed)
   const presentCount = isFuture ? 0 : displayedRegulars.filter(cs => {
     const s = attMap[cs.client_id]?.status;
     return !s || s === 'present' || s === 'replaced_out';
@@ -120,7 +123,7 @@ export default function LessonDetailScreen() {
       setReplaceModal(true);
       setClientSearch('');
       setLoadingAllClients(true);
-      const { data } = await supabase.from('clients').select('id, name').order('name');
+      const { data } = await supabase.from('clients').select('id, name, gender').order('name');
       setAllClients(data || []);
       setLoadingAllClients(false);
       return;
@@ -194,13 +197,13 @@ export default function LessonDetailScreen() {
     const origAtt = attMap[absentId];
     if (!origAtt) return;
 
-    // Optimistic: update UI immediately before DB round-trip
+    // Optimistic update immediately
     const tempRec = {
       id: '__temp__',
       client_id: substituteClient.id,
       status: 'replacement',
       paid: false,
-      clients: { id: substituteClient.id, name: substituteClient.name },
+      clients: { id: substituteClient.id, name: substituteClient.name, gender: substituteClient.gender },
     };
     setAttendanceRecs(prev => [
       ...prev.map(a => a.client_id === absentId ? { ...a, status: 'replaced_out' } : a),
@@ -210,34 +213,56 @@ export default function LessonDetailScreen() {
       ...prev,
       { absent_client_id: absentId, substitute_client_id: substituteClient.id },
     ]);
-
     setSavingId(absentId);
+
     try {
+      // 1. Mark absent client as replaced_out
       await supabase.from('attendance').update({ status: 'replaced_out' }).eq('id', origAtt.id);
 
-      // upsert so a pre-existing attendance row doesn't throw a UNIQUE conflict
-      const { data: insertedRow, error: subErr } = await supabase
+      // 2. Upsert substitute attendance (select → update or insert to avoid upsert constraint issues)
+      const { data: existingSubAtt } = await supabase
         .from('attendance')
-        .upsert({
-          lesson_date: date, time_slot: timeSlot,
-          client_id: substituteClient.id, status: 'replacement', paid: false,
-        }, { onConflict: 'lesson_date,time_slot,client_id' })
         .select('id')
-        .single();
-      if (subErr) throw subErr;
+        .eq('lesson_date', date).eq('time_slot', timeSlot).eq('client_id', substituteClient.id)
+        .maybeSingle();
 
-      if (insertedRow?.id) {
-        setAttendanceRecs(prev => prev.map(a =>
-          a.id === '__temp__' ? { ...a, id: insertedRow.id } : a
-        ));
+      let subAttId;
+      if (existingSubAtt?.id) {
+        const { error: updErr } = await supabase.from('attendance')
+          .update({ status: 'replacement', paid: false })
+          .eq('id', existingSubAtt.id);
+        if (updErr) throw updErr;
+        subAttId = existingSubAtt.id;
+      } else {
+        const { data: newRow, error: insErr } = await supabase.from('attendance')
+          .insert({ lesson_date: date, time_slot: timeSlot, client_id: substituteClient.id, status: 'replacement', paid: false })
+          .select('id').single();
+        if (insErr) throw insErr;
+        subAttId = newRow?.id;
       }
 
-      // upsert so re-selecting a replacement for the same slot doesn't conflict
-      const { error: linkErr } = await supabase.from('substitutions').upsert({
-        lesson_date: date, time_slot: timeSlot,
-        absent_client_id: absentId, substitute_client_id: substituteClient.id,
-      }, { onConflict: 'lesson_date,time_slot,absent_client_id' });
-      if (linkErr) throw linkErr;
+      // 3. Upsert substitution link
+      const { data: existingSub } = await supabase
+        .from('substitutions')
+        .select('id')
+        .eq('lesson_date', date).eq('time_slot', timeSlot).eq('absent_client_id', absentId)
+        .maybeSingle();
+
+      if (existingSub?.id) {
+        const { error: updSubErr } = await supabase.from('substitutions')
+          .update({ substitute_client_id: substituteClient.id })
+          .eq('id', existingSub.id);
+        if (updSubErr) throw updSubErr;
+      } else {
+        const { error: insSubErr } = await supabase.from('substitutions')
+          .insert({ lesson_date: date, time_slot: timeSlot, absent_client_id: absentId, substitute_client_id: substituteClient.id });
+        if (insSubErr) throw insSubErr;
+      }
+
+      // Update temp record with real DB id
+      if (subAttId) {
+        setAttendanceRecs(prev => prev.map(a => a.id === '__temp__' ? { ...a, id: subAttId } : a));
+      }
     } catch (e) {
       // Revert optimistic update
       setAttendanceRecs(prev =>
@@ -254,8 +279,6 @@ export default function LessonDetailScreen() {
     }
   }
 
-  // Exclude anyone who already has ANY attendance record for this lesson —
-  // inserting a second record for them would hit the UNIQUE constraint.
   const replacementExcludes = new Set([
     ...displayedRegulars.map(cs => cs.client_id),
     ...attendanceRecs.map(a => a.client_id),
@@ -281,19 +304,26 @@ export default function LessonDetailScreen() {
               const status = att?.status;
               const isLoading = savingId === cs.client_id;
               const substituteId = subMap[cs.client_id];
-              const substituteName = substituteId ? attMap[substituteId]?.clients?.name : null;
+              const substituteRec = substituteId ? attMap[substituteId] : null;
+              const substituteName = substituteRec?.clients?.name;
+              const substituteGender = substituteRec?.clients?.gender;
+              const clientGender = cs.clients?.gender;
 
-              // ── Replaced row: show substitute's name inline ──────────────
+              // ── Replaced row ──────────────────────────────────────────────
               if (status === 'replaced_out') {
                 return (
                   <View key={cs.client_id} style={[styles.clientRow, styles.replacedRow]}>
                     <View style={styles.clientInfo}>
-                      <Text style={styles.replacedLabel}>
-                        {substituteName ? 'הוחלף/ה ←' : '…'}
-                      </Text>
-                      <Text style={styles.clientName}>
-                        {substituteName || cs.clients?.name}
-                      </Text>
+                      {substituteName ? (
+                        <>
+                          <Text style={styles.substituteNameText}>{substituteName}</Text>
+                          <Text style={styles.replacedSubLabel}>
+                            {replaceVerb(substituteGender)} את {cs.clients?.name}
+                          </Text>
+                        </>
+                      ) : (
+                        <Text style={styles.clientName}>{cs.clients?.name}</Text>
+                      )}
                     </View>
                     <TouchableOpacity
                       style={styles.undoBtn}
@@ -306,12 +336,12 @@ export default function LessonDetailScreen() {
                 );
               }
 
-              // ── Normal row ───────────────────────────────────────────────
+              // ── Normal row ────────────────────────────────────────────────
               return (
                 <View key={cs.client_id} style={styles.clientRow}>
                   <View style={styles.clientInfo}>
                     {status === 'planned_absent' && (
-                      <Text style={styles.notifiedLabel}>הודיעה</Text>
+                      <Text style={styles.notifiedLabel}>הודיע/ה מראש</Text>
                     )}
                     <Text style={styles.clientName}>{cs.clients?.name}</Text>
                   </View>
@@ -319,21 +349,21 @@ export default function LessonDetailScreen() {
                   {!isFuture && (
                     <View style={styles.pillGroup}>
                       <StatusPill
-                        label="הגיע"
+                        label={arrivedLabel(clientGender)}
                         active={!status || status === 'present'}
                         color="#4CAF50"
                         onPress={() => setStatus(cs.client_id, 'present')}
                         loading={isLoading}
                       />
                       <StatusPill
-                        label="לא הגיע"
+                        label={didntLabel(clientGender)}
                         active={status === 'absent'}
                         color="#F44336"
                         onPress={() => setStatus(cs.client_id, 'absent')}
                         loading={isLoading}
                       />
                       <StatusPill
-                        label="החלף"
+                        label="החלף/י"
                         active={false}
                         color="#FF9800"
                         onPress={() => setStatus(cs.client_id, 'replaced_out')}
@@ -413,8 +443,9 @@ const styles = StyleSheet.create({
 
   clientInfo: { flex: 1 },
   clientName: { fontSize: 15, color: '#333', fontWeight: '500', textAlign: 'right' },
+  substituteNameText: { fontSize: 15, color: '#E65100', fontWeight: '700', textAlign: 'right' },
+  replacedSubLabel: { fontSize: 12, color: '#888', textAlign: 'right', marginTop: 2 },
   notifiedLabel: { fontSize: 10, color: '#888', textAlign: 'right', marginBottom: 1 },
-  replacedLabel: { fontSize: 10, color: '#FF9800', textAlign: 'right', marginBottom: 1 },
   emptySlot: { fontSize: 14, color: '#BDBDBD', fontStyle: 'italic', flex: 1, textAlign: 'right' },
 
   pillGroup: { flexDirection: 'row', gap: 4 },

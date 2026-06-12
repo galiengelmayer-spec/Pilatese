@@ -80,7 +80,7 @@ function generateLessons(fromDate, toDate, schedule, slots, attRecords, now) {
           timeSlot: ts,
           isFuture: lessonDt > now,
           isActive: lessonDt <= now && now < lessonEndDt,
-          regularClients: regular,
+          regularClients: regular.slice(0, MAX_BEDS),
           attendance: lessonAtt,
         });
       }
