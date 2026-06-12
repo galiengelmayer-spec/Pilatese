@@ -36,6 +36,8 @@ export default function LessonDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState(null);
 
+  const [unpaidClientIds, setUnpaidClientIds] = useState(new Set());
+
   const [replaceModal, setReplaceModal] = useState(false);
   const [replacingClientId, setReplacingClientId] = useState(null);
   const [allClients, setAllClients] = useState([]);
@@ -52,7 +54,7 @@ export default function LessonDetailScreen() {
 
   async function load() {
     setLoading(true);
-    const [slotsRes, attRes, subsRes] = await Promise.all([
+    const [slotsRes, attRes, subsRes, unpaidRes] = await Promise.all([
       supabase
         .from('client_slots')
         .select('client_id, clients(id, name)')
@@ -68,6 +70,10 @@ export default function LessonDetailScreen() {
         .select('absent_client_id, substitute_client_id')
         .eq('lesson_date', date)
         .eq('time_slot', timeSlot),
+      supabase
+        .from('payments')
+        .select('client_id')
+        .eq('status', 'unpaid'),
     ]);
 
     const regulars = slotsRes.data || [];
@@ -97,6 +103,7 @@ export default function LessonDetailScreen() {
     setRegularClients(regulars);
     setAttendanceRecs(atts);
     setSubstitutions(subsRes.data || []);
+    setUnpaidClientIds(new Set((unpaidRes.data || []).map(p => p.client_id)));
     setLoading(false);
   }
 
@@ -277,12 +284,19 @@ export default function LessonDetailScreen() {
                     {status === 'planned_absent' && (
                       <Text style={styles.notifiedLabel}>הודיעה</Text>
                     )}
-                    <Text style={[
-                      styles.clientName,
-                      status === 'replaced_out' && styles.strikethrough,
-                    ]}>
-                      {cs.clients?.name}
-                    </Text>
+                    <View style={styles.nameRow}>
+                      <Text style={[
+                        styles.clientName,
+                        status === 'replaced_out' && styles.strikethrough,
+                      ]}>
+                        {cs.clients?.name}
+                      </Text>
+                      {unpaidClientIds.has(cs.client_id) && (
+                        <View style={styles.debtBadge}>
+                          <Text style={styles.debtBadgeText}>יתרה לתשלום</Text>
+                        </View>
+                      )}
+                    </View>
                     {status === 'replaced_out' && substituteName && (
                       <Text style={styles.replacedByText}>⇄ {substituteName}</Text>
                     )}
@@ -404,7 +418,13 @@ const styles = StyleSheet.create({
   emptyRow: { backgroundColor: '#FAFAFA' },
 
   clientInfo: { flex: 1 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, justifyContent: 'flex-end' },
   clientName: { fontSize: 15, color: '#333', fontWeight: '500', textAlign: 'right' },
+  debtBadge: {
+    backgroundColor: '#FFEBEE', borderRadius: 6,
+    paddingHorizontal: 5, paddingVertical: 1,
+  },
+  debtBadgeText: { fontSize: 10, color: '#E53935', fontWeight: '600' },
   strikethrough: { textDecorationLine: 'line-through', color: '#bbb' },
   notifiedLabel: { fontSize: 10, color: '#888', textAlign: 'right', marginBottom: 1 },
   replacedByText: { fontSize: 11, color: '#FF9800', marginTop: 2, textAlign: 'right' },

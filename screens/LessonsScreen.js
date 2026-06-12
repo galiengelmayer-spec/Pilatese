@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity,
   StyleSheet, ActivityIndicator,
@@ -217,6 +217,18 @@ export default function LessonsScreen() {
     setLoading(false);
   }
 
+  // Scroll to active/next lesson every time data loads (initial mount + focus return).
+  // onLayout only fires on first mount, so useEffect on lessons is the reliable trigger.
+  useEffect(() => {
+    if (loading || lessons.length === 0) return;
+    const idx = scrollTargetIdxRef.current;
+    if (idx <= 0) return;
+    const t = setTimeout(() => {
+      listRef.current?.scrollToIndex({ index: idx, animated: false, viewPosition: 0.5 });
+    }, 80);
+    return () => clearTimeout(t);
+  }, [lessons]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (loading) return <ActivityIndicator style={{ flex: 1 }} size="large" color="#6C63FF" />;
 
   if (lessons.length === 0) {
@@ -252,12 +264,6 @@ export default function LessonsScreen() {
           );
         }}
         contentContainerStyle={{ padding: 12, paddingBottom: 40 }}
-        onLayout={() => {
-          const idx = scrollTargetIdxRef.current;
-          if (idx > 0) {
-            listRef.current?.scrollToIndex({ index: idx, animated: false, viewPosition: 0.5 });
-          }
-        }}
         onScrollToIndexFailed={({ index }) => {
           setTimeout(() => listRef.current?.scrollToIndex({
             index, animated: false, viewPosition: 0.5,

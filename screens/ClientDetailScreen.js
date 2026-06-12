@@ -6,6 +6,7 @@ import {
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
 import { useStudioSchedule, getSlotsForDay } from '../lib/studioSchedule';
+import { useClientPayments } from '../lib/payments';
 import SlidePanel from '../components/SlidePanel';
 
 const DAYS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי'];
@@ -34,6 +35,7 @@ export default function ClientDetailScreen() {
   const clientId = params?.clientId ?? null;
 
   const { schedule } = useStudioSchedule();
+  const { cycles, handleMarkPaid } = useClientPayments(clientId);
   const [form, setFormState] = useState(EMPTY_FORM);
   const [loading, setLoading] = useState(!!clientId);
   const [saving, setSaving] = useState(false);
@@ -334,6 +336,59 @@ export default function ClientDetailScreen() {
           )}
         </>
       )}
+
+      {clientId && cycles.length > 0 && (
+        <>
+          <View style={styles.sectionDivider} />
+          {cycles.some(c => c.payments?.[0]?.status === 'unpaid') && (
+            <View style={styles.debtBanner}>
+              <Text style={styles.debtBannerText}>יתרה לתשלום</Text>
+            </View>
+          )}
+          <Text style={styles.sectionLabel}>כרטיסיות</Text>
+          {cycles.map((cycle, idx) => {
+            const payment = cycle.payments?.[0];
+            const isPaid = payment?.status === 'paid';
+            const cycleNum = cycles.length - idx;
+            const startStr = cycle.started_at
+              ? new Date(cycle.started_at).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric', year: 'numeric' })
+              : '';
+            const endStr = cycle.completed_at
+              ? new Date(cycle.completed_at).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric', year: 'numeric' })
+              : 'פעיל';
+            return (
+              <View key={cycle.id} style={styles.cycleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cycleTitle}>
+                    כרטיסיה {cycleNum} · {cycle.sessions_used}/{cycle.sessions_max} שיעורים
+                  </Text>
+                  <Text style={styles.cycleRange}>{startStr} – {endStr}</Text>
+                </View>
+                {isPaid ? (
+                  <Text style={styles.paidLabel}>
+                    {'✓ שולם'}
+                    {payment.paid_at
+                      ? ` · ${new Date(payment.paid_at).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' })}`
+                      : ''}
+                  </Text>
+                ) : payment ? (
+                  <View style={styles.unpaidActions}>
+                    <View style={styles.unpaidBadge}>
+                      <Text style={styles.unpaidBadgeText}>יתרה לתשלום</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.markPaidBtn}
+                      onPress={() => handleMarkPaid(payment.id)}
+                    >
+                      <Text style={styles.markPaidBtnText}>סמן כשולם</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+              </View>
+            );
+          })}
+        </>
+      )}
     </SlidePanel>
   );
 }
@@ -384,4 +439,31 @@ const styles = StyleSheet.create({
     backgroundColor: '#FF9800', borderRadius: 12,
     padding: 13, alignItems: 'center', marginTop: 12,
   },
+
+  debtBanner: {
+    backgroundColor: '#FFEBEE', borderRadius: 10,
+    padding: 10, alignItems: 'center', marginBottom: 8,
+  },
+  debtBannerText: { color: '#E53935', fontWeight: '700', fontSize: 14 },
+
+  cycleRow: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#fff', borderRadius: 12,
+    padding: 12, marginBottom: 8, gap: 8,
+    shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, elevation: 1,
+  },
+  cycleTitle: { fontSize: 14, fontWeight: '600', color: '#333', textAlign: 'right' },
+  cycleRange: { fontSize: 12, color: '#999', marginTop: 2, textAlign: 'right' },
+  paidLabel: { fontSize: 12, color: '#4CAF50', fontWeight: '600' },
+  unpaidActions: { alignItems: 'flex-end', gap: 4 },
+  unpaidBadge: {
+    backgroundColor: '#FFEBEE', borderRadius: 6,
+    paddingHorizontal: 6, paddingVertical: 2,
+  },
+  unpaidBadgeText: { fontSize: 10, color: '#E53935', fontWeight: '600' },
+  markPaidBtn: {
+    backgroundColor: '#4CAF50', borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 6,
+  },
+  markPaidBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 });

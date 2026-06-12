@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import LessonsScreen from './screens/LessonsScreen';
 import ClientsScreen from './screens/ClientsScreen';
 import DashboardScreen from './screens/DashboardScreen';
+import PaymentsScreen from './screens/PaymentsScreen';
 import SettingsScreen from './screens/SettingsScreen';
 import LessonDetailScreen from './screens/LessonDetailScreen';
 import ClientDetailScreen from './screens/ClientDetailScreen';
@@ -37,6 +38,7 @@ function MainTabs() {
             'שיעורים': 'calendar-outline',
             'לקוחות': 'people-outline',
             'דשבורד': 'stats-chart-outline',
+            'תשלומים': 'card-outline',
           };
           return <Ionicons name={icons[route.name]} size={size} color={color} />;
         },
@@ -52,6 +54,7 @@ function MainTabs() {
       <Tab.Screen name="שיעורים" component={LessonsScreen} />
       <Tab.Screen name="לקוחות" component={ClientsScreen} />
       <Tab.Screen name="דשבורד" component={DashboardScreen} />
+      <Tab.Screen name="תשלומים" component={PaymentsScreen} />
     </Tab.Navigator>
   );
 }
