@@ -17,6 +17,42 @@ function toDateStr(d) {
   return d.toISOString().split('T')[0];
 }
 
+// Build a flat array interleaving { type:'divider' } headers between day groups
+function buildFlatItems(lessonList) {
+  const flat = [];
+  let lastDate = null;
+  for (const lesson of lessonList) {
+    if (lesson.date !== lastDate) {
+      lastDate = lesson.date;
+      flat.push({
+        type: 'divider',
+        id: `divider-${lesson.date}`,
+        date: lesson.date,
+        dayOfWeek: lesson.dayOfWeek,
+      });
+    }
+    flat.push({ type: 'lesson', ...lesson });
+  }
+  return flat;
+}
+
+function DayDivider({ date, dayOfWeek }) {
+  const dateObj = new Date(date + 'T12:00:00');
+  const dateLabel = dateObj.toLocaleDateString('he-IL', {
+    day: 'numeric', month: 'numeric', year: 'numeric',
+  });
+  const isToday = date === toDateStr(new Date());
+  return (
+    <View style={styles.dayDivider}>
+      <View style={styles.dayDividerLine} />
+      <Text style={[styles.dayDividerLabel, isToday && styles.dayDividerLabelToday]}>
+        יום {DAY_NAMES[dayOfWeek]} · {dateLabel}
+      </Text>
+      <View style={styles.dayDividerLine} />
+    </View>
+  );
+}
+
 function LessonRow({ lesson, expanded, onToggle, onToggleAttendance }) {
   const { date, dayOfWeek, timeSlot, isFuture, regularClients, attendance } = lesson;
 
@@ -35,7 +71,6 @@ function LessonRow({ lesson, expanded, onToggle, onToggleAttendance }) {
   const filledBeds = regularClients.length + replacements.length;
   const emptyBeds = Math.max(0, MAX_BEDS - filledBeds);
 
-  // Progress bar
   function renderBeds() {
     const beds = [];
     regularClients.forEach(cs => {
@@ -140,13 +175,14 @@ export default function LessonsScreen() {
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState(null);
   const listRef = useRef(null);
-  const todayIndexRef = useRef(0);
+  const scrollTargetIdxRef = useRef(0);
 
   useEffect(() => { fetchData(); }, []);
 
   async function fetchData() {
     setLoading(true);
     const today = new Date();
+    const now = new Date();
     const from = new Date(today); from.setDate(today.getDate() - 30);
     const to = new Date(today); to.setDate(today.getDate() + 14);
 
@@ -162,14 +198,15 @@ export default function LessonsScreen() {
     const slots = slotsRes.data || [];
     const att = attRes.data || [];
 
+    // Normalize keys: lesson_date may arrive as 'YYYY-MM-DDT...' (TIMESTAMPTZ) and
+    // time_slot may arrive as 'HH:MM:SS' (TIME column) — slice to canonical forms.
     const attMap = {};
     att.forEach(a => {
-      const key = `${a.lesson_date}_${a.time_slot}`;
+      const key = `${String(a.lesson_date).slice(0, 10)}_${String(a.time_slot).slice(0, 5)}`;
       if (!attMap[key]) attMap[key] = [];
       attMap[key].push(a);
     });
 
-    const now = new Date();
     const todayStr = toDateStr(today);
     const generated = [];
 
@@ -180,7 +217,7 @@ export default function LessonsScreen() {
       const dow = d.getDay();
       if (dow === 6) continue;
 
-      for (const { start_time: ts } of getSlotsForDay(studioSchedule, dow)) {
+      for (const { start_time: ts, end_time: te } of getSlotsForDay(studioSchedule, dow)) {
         const regular = slots.filter(s => s.day_of_week === dow && s.time_slot === ts);
         const key = `${dateStr}_${ts}`;
         const lessonAtt = attMap[key] || [];
@@ -192,21 +229,38 @@ export default function LessonsScreen() {
         const [h, m] = ts.split(':').map(Number);
         const lessonDt = new Date(d); lessonDt.setHours(h, m, 0, 0);
 
+        let lessonEndDt;
+        if (te) {
+          const [eh, em] = te.split(':').map(Number);
+          lessonEndDt = new Date(d); lessonEndDt.setHours(eh, em, 0, 0);
+        } else {
+          lessonEndDt = new Date(lessonDt.getTime() + 60 * 60 * 1000);
+        }
+
         generated.push({
           id: key,
           date: dateStr,
           dayOfWeek: dow,
           timeSlot: ts,
           isFuture: lessonDt > now,
+          isActive: lessonDt <= now && now < lessonEndDt,
           regularClients: regular,
           attendance: lessonAtt,
         });
       }
     }
 
+    // Find scroll target index within the flat items array (includes dividers)
+    const flat = buildFlatItems(generated);
+    const activeIdx  = flat.findIndex(it => it.type === 'lesson' && it.isActive);
+    const todayIdx   = flat.findIndex(it => it.type === 'lesson' && it.date === todayStr);
+    const futureIdx  = flat.findIndex(it => it.type === 'lesson' && it.isFuture);
+    scrollTargetIdxRef.current =
+      activeIdx  >= 0 ? activeIdx  :
+      todayIdx   >= 0 ? todayIdx   :
+      Math.max(0, futureIdx);
+
     setLessons(generated);
-    const idx = generated.findIndex(l => l.date >= todayStr);
-    todayIndexRef.current = Math.max(0, idx);
     setLoading(false);
   }
 
@@ -252,30 +306,38 @@ export default function LessonsScreen() {
     );
   }
 
+  const items = buildFlatItems(lessons);
+
   return (
     <View style={{ flex: 1, backgroundColor: '#F0EEF8' }}>
       <FlatList
         ref={listRef}
-        data={lessons}
+        data={items}
         keyExtractor={item => item.id}
-        renderItem={({ item }) => (
-          <LessonRow
-            lesson={item}
-            expanded={expandedId === item.id}
-            onToggle={() => toggleExpand(item.id)}
-            onToggleAttendance={handleToggleAttendance}
-          />
-        )}
+        renderItem={({ item }) => {
+          if (item.type === 'divider') {
+            return <DayDivider date={item.date} dayOfWeek={item.dayOfWeek} />;
+          }
+          return (
+            <LessonRow
+              lesson={item}
+              expanded={expandedId === item.id}
+              onToggle={() => toggleExpand(item.id)}
+              onToggleAttendance={handleToggleAttendance}
+            />
+          );
+        }}
         contentContainerStyle={{ padding: 12, paddingBottom: 40 }}
         onLayout={() => {
-          if (todayIndexRef.current > 0) {
-            listRef.current?.scrollToIndex({
-              index: todayIndexRef.current, animated: false, viewPosition: 0,
-            });
+          const idx = scrollTargetIdxRef.current;
+          if (idx > 0) {
+            listRef.current?.scrollToIndex({ index: idx, animated: false, viewPosition: 0.5 });
           }
         }}
         onScrollToIndexFailed={({ index }) => {
-          setTimeout(() => listRef.current?.scrollToIndex({ index, animated: false }), 300);
+          setTimeout(() => listRef.current?.scrollToIndex({
+            index, animated: false, viewPosition: 0.5,
+          }), 300);
         }}
       />
     </View>
@@ -324,4 +386,12 @@ const styles = StyleSheet.create({
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   emptyText: { fontSize: 18, fontWeight: '600', color: '#555' },
   emptyHint: { fontSize: 14, color: '#999', marginTop: 6 },
+
+  dayDivider: {
+    flexDirection: 'row', alignItems: 'center',
+    marginTop: 16, marginBottom: 4, marginHorizontal: 4,
+  },
+  dayDividerLine: { flex: 1, height: 1, backgroundColor: '#E0E0E0' },
+  dayDividerLabel: { fontSize: 12, color: '#888', fontWeight: '500', marginHorizontal: 10 },
+  dayDividerLabelToday: { color: '#FF9800', fontWeight: '700' },
 });
