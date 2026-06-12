@@ -4,10 +4,9 @@ import {
   StyleSheet, ActivityIndicator, Alert, Modal, ScrollView, TouchableWithoutFeedback
 } from 'react-native';
 import { supabase } from '../lib/supabase';
+import { useStudioSchedule, getSlotsForDay } from '../lib/studioSchedule';
 
 const DAYS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי'];
-const MORNING = ['07:30', '08:30', '09:30'];
-const EVENING = ['17:00', '18:00', '19:00', '20:00'];
 
 const EMPTY_FORM = {
   name: '', phone: '', paymentType: 'package',
@@ -15,6 +14,7 @@ const EMPTY_FORM = {
 };
 
 export default function ClientsScreen() {
+  const { schedule } = useStudioSchedule();
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -216,29 +216,57 @@ export default function ClientsScreen() {
                     ))}
                   </View>
 
-                  <Text style={styles.pickerLabel}>☀️ בוקר</Text>
-                  <View style={styles.pillRow}>
-                    {MORNING.map(t => (
-                      <TouchableOpacity key={t}
-                        style={[styles.pill, form.selectedTime === t && styles.pillActive]}
-                        onPress={() => set('selectedTime', form.selectedTime === t ? null : t)}
-                      >
-                        <Text style={[styles.pillText, form.selectedTime === t && styles.pillTextActive]}>{t}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-
-                  <Text style={styles.pickerLabel}>🌙 ערב</Text>
-                  <View style={styles.pillRow}>
-                    {EVENING.map(t => (
-                      <TouchableOpacity key={t}
-                        style={[styles.pill, form.selectedTime === t && styles.pillActive]}
-                        onPress={() => set('selectedTime', form.selectedTime === t ? null : t)}
-                      >
-                        <Text style={[styles.pillText, form.selectedTime === t && styles.pillTextActive]}>{t}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
+                  {(() => {
+                    const daySlots = form.selectedDay !== null
+                      ? getSlotsForDay(schedule, form.selectedDay)
+                      : [];
+                    const morning = daySlots.filter(s => s.start_time < '12:00');
+                    const evening = daySlots.filter(s => s.start_time >= '12:00');
+                    return (
+                      <>
+                        {morning.length > 0 && (
+                          <>
+                            <Text style={styles.pickerLabel}>☀️ בוקר</Text>
+                            <View style={styles.pillRow}>
+                              {morning.map(s => (
+                                <TouchableOpacity key={s.start_time}
+                                  style={[styles.pill, form.selectedTime === s.start_time && styles.pillActive]}
+                                  onPress={() => set('selectedTime', form.selectedTime === s.start_time ? null : s.start_time)}
+                                >
+                                  <Text style={[styles.pillText, form.selectedTime === s.start_time && styles.pillTextActive]}>{s.start_time}</Text>
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                          </>
+                        )}
+                        {evening.length > 0 && (
+                          <>
+                            <Text style={styles.pickerLabel}>🌙 ערב</Text>
+                            <View style={styles.pillRow}>
+                              {evening.map(s => (
+                                <TouchableOpacity key={s.start_time}
+                                  style={[styles.pill, form.selectedTime === s.start_time && styles.pillActive]}
+                                  onPress={() => set('selectedTime', form.selectedTime === s.start_time ? null : s.start_time)}
+                                >
+                                  <Text style={[styles.pillText, form.selectedTime === s.start_time && styles.pillTextActive]}>{s.start_time}</Text>
+                                </TouchableOpacity>
+                              ))}
+                            </View>
+                          </>
+                        )}
+                        {form.selectedDay !== null && daySlots.length === 0 && (
+                          <Text style={{ color: '#aaa', fontSize: 13, textAlign: 'right', marginVertical: 6 }}>
+                            אין שיעורים מוגדרים ליום זה
+                          </Text>
+                        )}
+                        {form.selectedDay === null && (
+                          <Text style={{ color: '#aaa', fontSize: 13, textAlign: 'right', marginVertical: 6 }}>
+                            בחרי יום כדי לראות שעות זמינות
+                          </Text>
+                        )}
+                      </>
+                    );
+                  })()}
 
                   <TouchableOpacity style={styles.addSlotBtn} onPress={addSlot}>
                     <Text style={styles.addSlotText}>+ הוסף משבצת</Text>

@@ -1,0 +1,42 @@
+APP ICON — AI Image Generation Prompt
+======================================
+
+Use this prompt with Midjourney, DALL-E 3, Adobe Firefly, or Stable Diffusion XL.
+
+─── PRIMARY PROMPT ───────────────────────────────────────────────────────────
+
+"App icon for a Pilates studio management app. Minimalist flat design. A single
+elegant female silhouette in a Pilates reformer pose — side profile, arms
+extended, body arched gracefully — rendered as a clean white line drawing on a
+soft lavender-to-violet gradient background (#6C63FF to #A89BFF). The figure is
+centered with generous whitespace. No text, no shadows, no 3D effects. Soft,
+modern, professional. iOS app icon style, 1024x1024 pixels, rounded-square safe
+area, vector clean."
+
+─── STYLE KEYWORDS ───────────────────────────────────────────────────────────
+
+Style:         Flat, minimalist, single-color line art on gradient
+Colors:        Background gradient: #6C63FF → #A89BFF (purple-lavender)
+               Figure: white (#FFFFFF), 2-3px stroke weight
+Mood:          Calm, elegant, professional, wellness
+Format:        1024×1024px (square), provide also 512×512 and 192×192
+Safe zone:     Keep figure within center 80% — corners are cropped by iOS
+
+─── ALTERNATIVE CONCEPTS ─────────────────────────────────────────────────────
+
+Option B: "Abstract lotus or spring coil icon representing a Pilates reformer
+spring, rendered in white on #6C63FF purple. Clean, geometric, modern."
+
+Option C: "Stylized letter פ (Hebrew letter Peh) designed as a Pilates body
+silhouette. White on purple gradient. Minimal, elegant, app icon."
+
+─── TECHNICAL REQUIREMENTS ───────────────────────────────────────────────────
+
+- Output: PNG with transparent background option
+- Sizes needed:
+    1024×1024  →  assets/icon.png  (Expo/iOS main icon)
+     512×512   →  assets/favicon.png  (web PWA favicon)
+     192×192   →  assets/android-icon-foreground.png  (Android adaptive)
+     108×108   →  assets/android-icon-background.png  (Android adaptive bg)
+- No text in the icon (app name shown separately by OS)
+- Test at small sizes (48px) — detail must remain readable

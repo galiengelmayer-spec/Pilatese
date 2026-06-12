@@ -4,12 +4,12 @@ import {
   StyleSheet, ActivityIndicator, LayoutAnimation, Platform, UIManager
 } from 'react-native';
 import { supabase } from '../lib/supabase';
+import { fetchSchedule, getSlotsForDay } from '../lib/studioSchedule';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-const TIME_SLOTS = ['07:30', '08:30', '09:30', '17:00', '18:00', '19:00', '20:00'];
 const DAY_NAMES = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
 const MAX_BEDS = 6;
 
@@ -150,7 +150,8 @@ export default function LessonsScreen() {
     const from = new Date(today); from.setDate(today.getDate() - 30);
     const to = new Date(today); to.setDate(today.getDate() + 14);
 
-    const [slotsRes, attRes] = await Promise.all([
+    const [studioSchedule, slotsRes, attRes] = await Promise.all([
+      fetchSchedule(),
       supabase.from('client_slots').select('client_id, day_of_week, time_slot, clients(id, name)'),
       supabase.from('attendance')
         .select('id, lesson_date, time_slot, client_id, status, paid, clients(id, name)')
@@ -179,7 +180,7 @@ export default function LessonsScreen() {
       const dow = d.getDay();
       if (dow === 6) continue;
 
-      for (const ts of TIME_SLOTS) {
+      for (const { start_time: ts } of getSlotsForDay(studioSchedule, dow)) {
         const regular = slots.filter(s => s.day_of_week === dow && s.time_slot === ts);
         const key = `${dateStr}_${ts}`;
         const lessonAtt = attMap[key] || [];
