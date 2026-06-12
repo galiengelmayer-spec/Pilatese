@@ -1,9 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity,
   StyleSheet, ActivityIndicator,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
 import { fetchSchedule, getSlotsForDay } from '../lib/studioSchedule';
 
@@ -64,9 +64,13 @@ function LessonRow({ lesson, onPress }) {
   const regularIds = new Set(regularClients.map(cs => cs.client_id));
   const replacements = attendance.filter(a => !regularIds.has(a.client_id));
 
-  const presentCount = attendance.filter(
-    a => a.status === 'present' || a.status === 'replacement'
-  ).length;
+  // No-record on a past lesson = arrived by default (same model as the pre-seed in LessonDetailScreen)
+  const presentCount = isFuture ? 0 : (
+    regularClients.filter(cs => {
+      const att = attMap[cs.client_id];
+      return !att || att.status === 'present';
+    }).length + replacements.filter(a => a.status === 'replacement').length
+  );
   const filledBeds = regularClients.length + replacements.length;
   const emptyBeds = Math.max(0, MAX_BEDS - filledBeds);
 
@@ -74,18 +78,17 @@ function LessonRow({ lesson, onPress }) {
     const beds = [];
     regularClients.forEach(cs => {
       const att = attMap[cs.client_id];
-      let color = '#BDBDBD';
+      let color = '#BDBDBD'; // future = unconfirmed grey
       if (!isFuture) {
-        if (!att) color = '#FFB300';
-        else if (att.status === 'present') color = '#4CAF50';
-        else if (att.status === 'absent')  color = '#F44336';
-        else if (att.status === 'planned_absent') color = '#BDBDBD';
-        else if (att.status === 'replaced_out')   color = '#E0E0E0';
+        if (!att || att.status === 'present') color = '#4CAF50'; // arrived (default)
+        else if (att.status === 'absent')         color = '#F44336'; // no-show
+        else if (att.status === 'planned_absent') color = '#BDBDBD'; // notified absent
+        else if (att.status === 'replaced_out')   color = '#E0E0E0'; // replaced
       }
       beds.push(color);
     });
-    replacements.forEach(() => beds.push('#FF9800'));
-    for (let i = 0; i < emptyBeds; i++) beds.push('#E8E8E8');
+    replacements.forEach(() => beds.push('#FF9800')); // replacement client
+    for (let i = 0; i < emptyBeds; i++) beds.push('#E8E8E8'); // empty slot
     return beds.slice(0, MAX_BEDS);
   }
 
@@ -125,7 +128,9 @@ export default function LessonsScreen() {
   const listRef = useRef(null);
   const scrollTargetIdxRef = useRef(0);
 
-  useEffect(() => { fetchData(); }, []);
+  // Refresh every time the screen comes into focus (returning from LessonDetailScreen
+  // means attendance may have changed via pre-seeding or manual toggles)
+  useFocusEffect(useCallback(() => { fetchData(); }, []));
 
   async function fetchData() {
     setLoading(true);
@@ -250,12 +255,12 @@ export default function LessonsScreen() {
         onLayout={() => {
           const idx = scrollTargetIdxRef.current;
           if (idx > 0) {
-            listRef.current?.scrollToIndex({ index: idx, animated: false, viewPosition: 0 });
+            listRef.current?.scrollToIndex({ index: idx, animated: false, viewPosition: 0.5 });
           }
         }}
         onScrollToIndexFailed={({ index }) => {
           setTimeout(() => listRef.current?.scrollToIndex({
-            index, animated: false, viewPosition: 0,
+            index, animated: false, viewPosition: 0.5,
           }), 300);
         }}
       />

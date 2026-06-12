@@ -200,15 +200,25 @@ export default function LessonDetailScreen() {
 
       await supabase.from('attendance').update({ status: 'replaced_out' }).eq('id', origAtt.id);
 
-      const { data: subAttRec, error: subErr } = await supabase
+      const { data: insertedRow, error: subErr } = await supabase
         .from('attendance')
         .insert({
           lesson_date: date, time_slot: timeSlot,
           client_id: substituteClient.id, status: 'replacement', paid: false,
         })
-        .select('id, client_id, status, paid, clients(id, name)')
+        .select('id')
         .single();
       if (subErr) throw subErr;
+
+      // Build local-state record using the known substituteClient data so the
+      // name shows immediately without relying on a join in the INSERT response.
+      const subAttRec = {
+        id: insertedRow?.id,
+        client_id: substituteClient.id,
+        status: 'replacement',
+        paid: false,
+        clients: { id: substituteClient.id, name: substituteClient.name },
+      };
 
       const { error: linkErr } = await supabase.from('substitutions').insert({
         lesson_date: date, time_slot: timeSlot,
