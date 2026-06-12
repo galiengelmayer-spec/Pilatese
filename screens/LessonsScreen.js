@@ -331,12 +331,12 @@ export default function LessonsScreen() {
         onLayout={() => {
           const idx = scrollTargetIdxRef.current;
           if (idx > 0) {
-            listRef.current?.scrollToIndex({ index: idx, animated: false, viewPosition: 0.5 });
+            listRef.current?.scrollToIndex({ index: idx, animated: false, viewPosition: 0 });
           }
         }}
         onScrollToIndexFailed={({ index }) => {
           setTimeout(() => listRef.current?.scrollToIndex({
-            index, animated: false, viewPosition: 0.5,
+            index, animated: false, viewPosition: 0,
           }), 300);
         }}
       />
