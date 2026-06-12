@@ -36,8 +36,6 @@ export default function LessonDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState(null);
 
-  const [unpaidClientIds, setUnpaidClientIds] = useState(new Set());
-
   const [replaceModal, setReplaceModal] = useState(false);
   const [replacingClientId, setReplacingClientId] = useState(null);
   const [allClients, setAllClients] = useState([]);
@@ -54,7 +52,7 @@ export default function LessonDetailScreen() {
 
   async function load() {
     setLoading(true);
-    const [slotsRes, attRes, subsRes, unpaidRes] = await Promise.all([
+    const [slotsRes, attRes, subsRes] = await Promise.all([
       supabase
         .from('client_slots')
         .select('client_id, clients(id, name)')
@@ -70,17 +68,11 @@ export default function LessonDetailScreen() {
         .select('absent_client_id, substitute_client_id')
         .eq('lesson_date', date)
         .eq('time_slot', timeSlot),
-      supabase
-        .from('payments')
-        .select('client_id')
-        .eq('status', 'unpaid'),
     ]);
 
-    const regulars = slotsRes.data || [];
+    const regulars = (slotsRes.data || []).slice(0, MAX_BEDS);
     let atts = attRes.data || [];
 
-    // Pre-seed: insert 'present' for regular clients with no attendance record yet.
-    // Filters first so it only inserts truly missing rows (no race risk on first open).
     if (!isFuture && regulars.length > 0) {
       const attClientIds = new Set(atts.map(a => a.client_id));
       const missing = regulars.filter(cs => !attClientIds.has(cs.client_id));
@@ -103,25 +95,24 @@ export default function LessonDetailScreen() {
     setRegularClients(regulars);
     setAttendanceRecs(atts);
     setSubstitutions(subsRes.data || []);
-    setUnpaidClientIds(new Set((unpaidRes.data || []).map(p => p.client_id)));
     setLoading(false);
   }
 
-  // Derived maps — recomputed from state on every render
+  // Derived maps — recomputed on every render
   const attMap = {};
   attendanceRecs.forEach(a => { attMap[a.client_id] = a; });
 
   const subMap = {}; // absent_client_id → substitute_client_id
   substitutions.forEach(s => { subMap[s.absent_client_id] = s.substitute_client_id; });
 
-  const regularIds = new Set(regularClients.map(cs => cs.client_id));
-  const replacementRecs = attendanceRecs.filter(
-    a => !regularIds.has(a.client_id) && a.status === 'replacement'
-  );
-  const presentCount = attendanceRecs.filter(
-    a => a.status === 'present' || a.status === 'replacement'
-  ).length;
-  const emptyBeds = Math.max(0, MAX_BEDS - regularClients.length - replacementRecs.length);
+  const displayedRegulars = regularClients.slice(0, MAX_BEDS);
+  const emptyBeds = Math.max(0, MAX_BEDS - displayedRegulars.length);
+
+  // Count occupied beds: present + replaced_out (substitute is physically in the bed)
+  const presentCount = isFuture ? 0 : displayedRegulars.filter(cs => {
+    const s = attMap[cs.client_id]?.status;
+    return !s || s === 'present' || s === 'replaced_out';
+  }).length;
 
   async function setStatus(clientId, newStatus) {
     if (newStatus === 'replaced_out') {
@@ -142,7 +133,6 @@ export default function LessonDetailScreen() {
     try {
       const substituteId = subMap[clientId];
 
-      // Clicking הגיע or לא הגיע on a replaced-out client undoes the substitution first
       if (att.status === 'replaced_out') {
         if (substituteId) {
           await supabase.from('attendance').delete()
@@ -170,7 +160,7 @@ export default function LessonDetailScreen() {
   }
 
   async function handleUndo(clientId) {
-    const substituteId = subMap[clientId]; // capture before any state changes
+    const substituteId = subMap[clientId];
     const att = attMap[clientId];
     setSavingId(clientId);
     try {
@@ -200,11 +190,29 @@ export default function LessonDetailScreen() {
     setReplaceModal(false);
     const absentId = replacingClientId;
     setReplacingClientId(null);
+
+    const origAtt = attMap[absentId];
+    if (!origAtt) return;
+
+    // Optimistic: update UI immediately before DB round-trip
+    const tempRec = {
+      id: '__temp__',
+      client_id: substituteClient.id,
+      status: 'replacement',
+      paid: false,
+      clients: { id: substituteClient.id, name: substituteClient.name },
+    };
+    setAttendanceRecs(prev => [
+      ...prev.map(a => a.client_id === absentId ? { ...a, status: 'replaced_out' } : a),
+      tempRec,
+    ]);
+    setSubstitutions(prev => [
+      ...prev,
+      { absent_client_id: absentId, substitute_client_id: substituteClient.id },
+    ]);
+
     setSavingId(absentId);
     try {
-      const origAtt = attMap[absentId];
-      if (!origAtt) throw new Error('לא נמצאה רשומת נוכחות');
-
       await supabase.from('attendance').update({ status: 'replaced_out' }).eq('id', origAtt.id);
 
       const { data: insertedRow, error: subErr } = await supabase
@@ -217,41 +225,37 @@ export default function LessonDetailScreen() {
         .single();
       if (subErr) throw subErr;
 
-      // Build local-state record using the known substituteClient data so the
-      // name shows immediately without relying on a join in the INSERT response.
-      const subAttRec = {
-        id: insertedRow?.id,
-        client_id: substituteClient.id,
-        status: 'replacement',
-        paid: false,
-        clients: { id: substituteClient.id, name: substituteClient.name },
-      };
+      // Swap temp ID for real one
+      if (insertedRow?.id) {
+        setAttendanceRecs(prev => prev.map(a =>
+          a.id === '__temp__' ? { ...a, id: insertedRow.id } : a
+        ));
+      }
 
       const { error: linkErr } = await supabase.from('substitutions').insert({
         lesson_date: date, time_slot: timeSlot,
         absent_client_id: absentId, substitute_client_id: substituteClient.id,
       });
       if (linkErr) throw linkErr;
-
-      setAttendanceRecs(prev => [
-        ...prev.map(a => a.client_id === absentId ? { ...a, status: 'replaced_out' } : a),
-        subAttRec,
-      ]);
-      setSubstitutions(prev => [
-        ...prev,
-        { absent_client_id: absentId, substitute_client_id: substituteClient.id },
-      ]);
     } catch (e) {
+      // Revert optimistic update
+      setAttendanceRecs(prev =>
+        prev
+          .filter(a => a.client_id !== substituteClient.id)
+          .map(a => a.client_id === absentId ? { ...a, status: origAtt.status } : a)
+      );
+      setSubstitutions(prev =>
+        prev.filter(s => s.absent_client_id !== absentId || s.substitute_client_id !== substituteClient.id)
+      );
       Alert.alert('שגיאה', e.message || 'לא ניתן לשמור');
     } finally {
       setSavingId(null);
     }
   }
 
-  // Clients eligible as replacements: exclude regulars + already-placed replacements
   const replacementExcludes = new Set([
-    ...regularClients.map(cs => cs.client_id),
-    ...replacementRecs.map(a => a.client_id),
+    ...displayedRegulars.map(cs => cs.client_id),
+    ...attendanceRecs.filter(a => a.status === 'replacement').map(a => a.client_id),
   ]);
   const filteredAllClients = allClients.filter(c =>
     !replacementExcludes.has(c.id) &&
@@ -269,44 +273,51 @@ export default function LessonDetailScreen() {
               <Text style={styles.summaryLine}>{presentCount} מתוך {MAX_BEDS} הגיעו</Text>
             )}
 
-            {regularClients.map(cs => {
+            {displayedRegulars.map(cs => {
               const att = attMap[cs.client_id];
               const status = att?.status;
               const isLoading = savingId === cs.client_id;
               const substituteId = subMap[cs.client_id];
-              const substituteName = substituteId
-                ? attMap[substituteId]?.clients?.name
-                : null;
+              const substituteName = substituteId ? attMap[substituteId]?.clients?.name : null;
 
+              // ── Replaced row: show substitute's name inline ──────────────
+              if (status === 'replaced_out') {
+                return (
+                  <View key={cs.client_id} style={[styles.clientRow, styles.replacedRow]}>
+                    <View style={styles.clientInfo}>
+                      <Text style={styles.replacedLabel}>
+                        {substituteName ? 'הוחלף/ה ←' : '…'}
+                      </Text>
+                      <Text style={styles.clientName}>
+                        {substituteName || cs.clients?.name}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.undoBtn}
+                      onPress={() => handleUndo(cs.client_id)}
+                      disabled={isLoading}
+                    >
+                      <Text style={styles.undoBtnText}>{isLoading ? '…' : 'בטל'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              }
+
+              // ── Normal row ───────────────────────────────────────────────
               return (
                 <View key={cs.client_id} style={styles.clientRow}>
                   <View style={styles.clientInfo}>
                     {status === 'planned_absent' && (
                       <Text style={styles.notifiedLabel}>הודיעה</Text>
                     )}
-                    <View style={styles.nameRow}>
-                      <Text style={[
-                        styles.clientName,
-                        status === 'replaced_out' && styles.strikethrough,
-                      ]}>
-                        {cs.clients?.name}
-                      </Text>
-                      {unpaidClientIds.has(cs.client_id) && (
-                        <View style={styles.debtBadge}>
-                          <Text style={styles.debtBadgeText}>יתרה לתשלום</Text>
-                        </View>
-                      )}
-                    </View>
-                    {status === 'replaced_out' && substituteName && (
-                      <Text style={styles.replacedByText}>⇄ {substituteName}</Text>
-                    )}
+                    <Text style={styles.clientName}>{cs.clients?.name}</Text>
                   </View>
 
-                  {!isFuture && status !== 'replaced_out' && (
+                  {!isFuture && (
                     <View style={styles.pillGroup}>
                       <StatusPill
                         label="הגיע"
-                        active={status === 'present'}
+                        active={!status || status === 'present'}
                         color="#4CAF50"
                         onPress={() => setStatus(cs.client_id, 'present')}
                         loading={isLoading}
@@ -319,7 +330,7 @@ export default function LessonDetailScreen() {
                         loading={isLoading}
                       />
                       <StatusPill
-                        label="הוחלף"
+                        label="החלף"
                         active={false}
                         color="#FF9800"
                         onPress={() => setStatus(cs.client_id, 'replaced_out')}
@@ -327,28 +338,9 @@ export default function LessonDetailScreen() {
                       />
                     </View>
                   )}
-
-                  {!isFuture && status === 'replaced_out' && (
-                    <TouchableOpacity
-                      style={styles.undoBtn}
-                      onPress={() => handleUndo(cs.client_id)}
-                      disabled={isLoading}
-                    >
-                      <Text style={styles.undoBtnText}>{isLoading ? '…' : 'בטל'}</Text>
-                    </TouchableOpacity>
-                  )}
                 </View>
               );
             })}
-
-            {replacementRecs.map(a => (
-              <View key={a.client_id} style={[styles.clientRow, styles.replacementRow]}>
-                <View style={styles.clientInfo}>
-                  <Text style={styles.replacementLabel}>מחליפ/ה</Text>
-                  <Text style={styles.clientName}>{a.clients?.name}</Text>
-                </View>
-              </View>
-            ))}
 
             {Array.from({ length: emptyBeds }).map((_, i) => (
               <View key={`empty-${i}`} style={[styles.clientRow, styles.emptyRow]}>
@@ -359,7 +351,6 @@ export default function LessonDetailScreen() {
         )}
       </SlidePanel>
 
-      {/* Replacement search — absolute overlay so it stays inside the phone frame */}
       {replaceModal && (
         <View style={styles.modalOverlay}>
           <View style={styles.searchModal}>
@@ -414,21 +405,13 @@ const styles = StyleSheet.create({
     padding: 12, marginBottom: 8, gap: 8,
     shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4, elevation: 1,
   },
-  replacementRow: { backgroundColor: '#FFF8F0', borderLeftWidth: 3, borderLeftColor: '#FF9800' },
+  replacedRow: { backgroundColor: '#FFF8F0', borderLeftWidth: 3, borderLeftColor: '#FF9800' },
   emptyRow: { backgroundColor: '#FAFAFA' },
 
   clientInfo: { flex: 1 },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, justifyContent: 'flex-end' },
   clientName: { fontSize: 15, color: '#333', fontWeight: '500', textAlign: 'right' },
-  debtBadge: {
-    backgroundColor: '#FFEBEE', borderRadius: 6,
-    paddingHorizontal: 5, paddingVertical: 1,
-  },
-  debtBadgeText: { fontSize: 10, color: '#E53935', fontWeight: '600' },
-  strikethrough: { textDecorationLine: 'line-through', color: '#bbb' },
   notifiedLabel: { fontSize: 10, color: '#888', textAlign: 'right', marginBottom: 1 },
-  replacedByText: { fontSize: 11, color: '#FF9800', marginTop: 2, textAlign: 'right' },
-  replacementLabel: { fontSize: 10, color: '#FF9800', textAlign: 'right', marginBottom: 1 },
+  replacedLabel: { fontSize: 10, color: '#FF9800', textAlign: 'right', marginBottom: 1 },
   emptySlot: { fontSize: 14, color: '#BDBDBD', fontStyle: 'italic', flex: 1, textAlign: 'right' },
 
   pillGroup: { flexDirection: 'row', gap: 4 },
