@@ -56,23 +56,20 @@ export default function LessonDetailScreen() {
 
   async function load() {
     setLoading(true);
-    const [slotsRes, attRes, subsRes] = await Promise.all([
-      supabase
-        .from('client_slots')
-        .select('client_id, clients(id, name, gender)')
-        .eq('day_of_week', dayOfWeek)
-        .eq('time_slot', timeSlot),
-      supabase
-        .from('attendance')
-        .select('id, client_id, status, paid, clients(id, name, gender)')
-        .eq('lesson_date', date)
-        .eq('time_slot', timeSlot),
-      supabase
-        .from('substitutions')
-        .select('absent_client_id, substitute_client_id')
-        .eq('lesson_date', date)
-        .eq('time_slot', timeSlot),
+
+    // Try with gender; fall back gracefully if the column hasn't been added yet
+    let [slotsRes, attRes, subsRes] = await Promise.all([
+      supabase.from('client_slots').select('client_id, clients(id, name, gender)').eq('day_of_week', dayOfWeek).eq('time_slot', timeSlot),
+      supabase.from('attendance').select('id, client_id, status, paid, clients(id, name, gender)').eq('lesson_date', date).eq('time_slot', timeSlot),
+      supabase.from('substitutions').select('absent_client_id, substitute_client_id').eq('lesson_date', date).eq('time_slot', timeSlot),
     ]);
+
+    if (slotsRes.error || attRes.error) {
+      [slotsRes, attRes] = await Promise.all([
+        supabase.from('client_slots').select('client_id, clients(id, name)').eq('day_of_week', dayOfWeek).eq('time_slot', timeSlot),
+        supabase.from('attendance').select('id, client_id, status, paid, clients(id, name)').eq('lesson_date', date).eq('time_slot', timeSlot),
+      ]);
+    }
 
     const regulars = (slotsRes.data || []).slice(0, MAX_BEDS);
     let atts = attRes.data || [];
