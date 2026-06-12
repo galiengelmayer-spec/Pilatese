@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet,
-  Alert, Modal, TextInput, ActivityIndicator, TouchableWithoutFeedback,
+  Alert, TextInput, ActivityIndicator, TouchableWithoutFeedback,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { fetchSchedule, FALLBACK_SCHEDULE } from '../lib/studioSchedule';
@@ -197,6 +197,7 @@ export default function SettingsScreen() {
   })).filter(g => g.slots.length > 0);
 
   return (
+    <View style={{ flex: 1 }}>
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 60 }}>
 
       {/* ── Section: Studio schedule ── */}
@@ -264,68 +265,69 @@ export default function SettingsScreen() {
         }
       </TouchableOpacity>
 
-      {/* ── Slot add/edit modal ── */}
-      <Modal visible={slotModal} animationType="slide" transparent>
-        <TouchableWithoutFeedback onPress={() => setSlotModal(false)}>
-          <View style={styles.overlay}>
-            <TouchableWithoutFeedback>
-              <View style={styles.modal}>
-                <Text style={styles.modalTitle}>{editingSlot ? 'עריכת שיעור' : 'הוספת שיעור'}</Text>
-
-                <Text style={styles.fieldLabel}>יום</Text>
-                <View style={styles.pillRow}>
-                  {DAYS.map((d, i) => (
-                    <TouchableOpacity
-                      key={i}
-                      style={[styles.pill, slotForm.day === i && styles.pillActive]}
-                      onPress={() => setSlotForm(f => ({ ...f, day: i }))}
-                    >
-                      <Text style={[styles.pillText, slotForm.day === i && styles.pillTextActive]}>{d}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                <Text style={styles.fieldLabel}>שעת התחלה (HH:MM)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={slotForm.startTime}
-                  onChangeText={v => setSlotForm(f => ({ ...f, startTime: v }))}
-                  placeholder="07:30"
-                  textAlign="center"
-                  keyboardType="numbers-and-punctuation"
-                  maxLength={5}
-                />
-
-                <Text style={styles.fieldLabel}>שעת סיום (HH:MM)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={slotForm.endTime}
-                  onChangeText={v => setSlotForm(f => ({ ...f, endTime: v }))}
-                  placeholder="08:30"
-                  textAlign="center"
-                  keyboardType="numbers-and-punctuation"
-                  maxLength={5}
-                />
-
-                <TouchableOpacity
-                  style={[styles.saveBtn, savingSlot && styles.btnDisabled]}
-                  onPress={saveSlot}
-                  disabled={savingSlot}
-                >
-                  {savingSlot
-                    ? <ActivityIndicator color="#fff" />
-                    : <Text style={styles.saveBtnText}>שמור</Text>
-                  }
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => setSlotModal(false)}>
-                  <Text style={styles.cancelText}>ביטול</Text>
-                </TouchableOpacity>
-              </View>
-            </TouchableWithoutFeedback>
-          </View>
-        </TouchableWithoutFeedback>
-      </Modal>
     </ScrollView>
+
+    {slotModal && (
+      <TouchableWithoutFeedback onPress={() => setSlotModal(false)}>
+        <View style={styles.overlay}>
+          <TouchableWithoutFeedback>
+            <View style={styles.modal}>
+              <Text style={styles.modalTitle}>{editingSlot ? 'עריכת שיעור' : 'הוספת שיעור'}</Text>
+
+              <Text style={styles.fieldLabel}>יום</Text>
+              <View style={styles.pillRow}>
+                {DAYS.map((d, i) => (
+                  <TouchableOpacity
+                    key={i}
+                    style={[styles.pill, slotForm.day === i && styles.pillActive]}
+                    onPress={() => setSlotForm(f => ({ ...f, day: i }))}
+                  >
+                    <Text style={[styles.pillText, slotForm.day === i && styles.pillTextActive]}>{d}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={styles.fieldLabel}>שעת התחלה (HH:MM)</Text>
+              <TextInput
+                style={styles.input}
+                value={slotForm.startTime}
+                onChangeText={v => setSlotForm(f => ({ ...f, startTime: v }))}
+                placeholder="07:30"
+                textAlign="center"
+                keyboardType="numbers-and-punctuation"
+                maxLength={5}
+              />
+
+              <Text style={styles.fieldLabel}>שעת סיום (HH:MM)</Text>
+              <TextInput
+                style={styles.input}
+                value={slotForm.endTime}
+                onChangeText={v => setSlotForm(f => ({ ...f, endTime: v }))}
+                placeholder="08:30"
+                textAlign="center"
+                keyboardType="numbers-and-punctuation"
+                maxLength={5}
+              />
+
+              <TouchableOpacity
+                style={[styles.saveBtn, savingSlot && styles.btnDisabled]}
+                onPress={saveSlot}
+                disabled={savingSlot}
+              >
+                {savingSlot
+                  ? <ActivityIndicator color="#fff" />
+                  : <Text style={styles.saveBtnText}>שמור</Text>
+                }
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setSlotModal(false)}>
+                <Text style={styles.cancelText}>ביטול</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableWithoutFeedback>
+        </View>
+      </TouchableWithoutFeedback>
+    )}
+    </View>
   );
 }
 
@@ -370,7 +372,7 @@ const styles = StyleSheet.create({
 
   btnDisabled: { opacity: 0.5 },
 
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end', zIndex: 100 },
   modal: {
     backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24,
     padding: 24, maxHeight: '85%',

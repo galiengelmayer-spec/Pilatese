@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, TextInput,
-  StyleSheet, ActivityIndicator, Alert, Modal, ScrollView, TouchableWithoutFeedback
+  StyleSheet, ActivityIndicator, Alert, ScrollView, TouchableWithoutFeedback
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { useStudioSchedule, getSlotsForDay } from '../lib/studioSchedule';
@@ -165,7 +165,7 @@ export default function ClientsScreen() {
         <Text style={styles.fabText}>+ לקוח חדש</Text>
       </TouchableOpacity>
 
-      <Modal visible={modalVisible} animationType="slide" transparent>
+      {modalVisible && (
         <TouchableWithoutFeedback onPress={() => setModalVisible(false)}>
           <View style={styles.overlay}>
             <TouchableWithoutFeedback>
@@ -283,7 +283,7 @@ export default function ClientsScreen() {
             </TouchableWithoutFeedback>
           </View>
         </TouchableWithoutFeedback>
-      </Modal>
+      )}
     </View>
   );
 }
@@ -312,7 +312,7 @@ const styles = StyleSheet.create({
     shadowColor: '#6C63FF', shadowOpacity: 0.4, shadowRadius: 8, elevation: 5,
   },
   fabText: { color: '#fff', fontWeight: 'bold', fontSize: 15 },
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end', alignItems: 'center' },
+  overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end', alignItems: 'center', zIndex: 100 },
   modal: {
     backgroundColor: '#fff', borderTopLeftRadius: 24, borderTopRightRadius: 24,
     padding: 24, width: '100%', maxWidth: 390, maxHeight: '90%',
