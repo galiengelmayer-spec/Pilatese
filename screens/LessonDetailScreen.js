@@ -23,9 +23,9 @@ function StatusPill({ label, active, color, onPress, loading }) {
   );
 }
 
-function arrivedLabel(gender) { return gender === 'male' ? 'הגיע' : 'הגיעה'; }
-function didntLabel(gender)   { return gender === 'male' ? 'לא הגיע' : 'לא הגיעה'; }
-function replaceVerb(gender)  { return gender === 'male' ? 'מחליף' : 'מחליפה'; }
+const ARRIVED_LABEL  = 'הגיע/ה';
+const DIDNT_LABEL    = 'לא הגיע/ה';
+const REPLACE_VERB   = 'מחליפ/ה';
 
 export default function LessonDetailScreen() {
   const { params } = useRoute();
@@ -57,19 +57,11 @@ export default function LessonDetailScreen() {
   async function load() {
     setLoading(true);
 
-    // Try with gender; fall back gracefully if the column hasn't been added yet
-    let [slotsRes, attRes, subsRes] = await Promise.all([
-      supabase.from('client_slots').select('client_id, clients(id, name, gender)').eq('day_of_week', dayOfWeek).eq('time_slot', timeSlot),
-      supabase.from('attendance').select('id, client_id, status, paid, clients(id, name, gender)').eq('lesson_date', date).eq('time_slot', timeSlot),
+    const [slotsRes, attRes, subsRes] = await Promise.all([
+      supabase.from('client_slots').select('client_id, clients(id, name)').eq('day_of_week', dayOfWeek).eq('time_slot', timeSlot),
+      supabase.from('attendance').select('id, client_id, status, paid, clients(id, name)').eq('lesson_date', date).eq('time_slot', timeSlot),
       supabase.from('substitutions').select('absent_client_id, substitute_client_id').eq('lesson_date', date).eq('time_slot', timeSlot),
     ]);
-
-    if (slotsRes.error || attRes.error) {
-      [slotsRes, attRes] = await Promise.all([
-        supabase.from('client_slots').select('client_id, clients(id, name)').eq('day_of_week', dayOfWeek).eq('time_slot', timeSlot),
-        supabase.from('attendance').select('id, client_id, status, paid, clients(id, name)').eq('lesson_date', date).eq('time_slot', timeSlot),
-      ]);
-    }
 
     const regulars = (slotsRes.data || []).slice(0, MAX_BEDS);
     let atts = attRes.data || [];
@@ -86,7 +78,7 @@ export default function LessonDetailScreen() {
         );
         const { data: refreshed } = await supabase
           .from('attendance')
-          .select('id, client_id, status, paid, clients(id, name, gender)')
+          .select('id, client_id, status, paid, clients(id, name)')
           .eq('lesson_date', date)
           .eq('time_slot', timeSlot);
         atts = refreshed || [];
@@ -120,7 +112,7 @@ export default function LessonDetailScreen() {
       setReplaceModal(true);
       setClientSearch('');
       setLoadingAllClients(true);
-      const { data } = await supabase.from('clients').select('id, name, gender').order('name');
+      const { data } = await supabase.from('clients').select('id, name').order('name');
       setAllClients(data || []);
       setLoadingAllClients(false);
       return;
@@ -200,7 +192,7 @@ export default function LessonDetailScreen() {
       client_id: substituteClient.id,
       status: 'replacement',
       paid: false,
-      clients: { id: substituteClient.id, name: substituteClient.name, gender: substituteClient.gender },
+      clients: { id: substituteClient.id, name: substituteClient.name },
     };
     setAttendanceRecs(prev => [
       ...prev.map(a => a.client_id === absentId ? { ...a, status: 'replaced_out' } : a),
@@ -303,8 +295,6 @@ export default function LessonDetailScreen() {
               const substituteId = subMap[cs.client_id];
               const substituteRec = substituteId ? attMap[substituteId] : null;
               const substituteName = substituteRec?.clients?.name;
-              const substituteGender = substituteRec?.clients?.gender;
-              const clientGender = cs.clients?.gender;
 
               // ── Replaced row ──────────────────────────────────────────────
               if (status === 'replaced_out') {
@@ -313,7 +303,7 @@ export default function LessonDetailScreen() {
                     <View style={styles.clientInfo}>
                       {substituteName ? (
                         <Text style={styles.replacedSentence}>
-                          {substituteName} {replaceVerb(substituteGender)} את {cs.clients?.name}
+                          {substituteName} {REPLACE_VERB} את {cs.clients?.name}
                         </Text>
                       ) : (
                         <Text style={styles.clientName}>{cs.clients?.name}</Text>
@@ -343,14 +333,14 @@ export default function LessonDetailScreen() {
                   {!isFuture && (
                     <View style={styles.pillGroup}>
                       <StatusPill
-                        label={arrivedLabel(clientGender)}
+                        label={ARRIVED_LABEL}
                         active={!status || status === 'present'}
                         color="#4CAF50"
                         onPress={() => setStatus(cs.client_id, 'present')}
                         loading={isLoading}
                       />
                       <StatusPill
-                        label={didntLabel(clientGender)}
+                        label={DIDNT_LABEL}
                         active={status === 'absent'}
                         color="#F44336"
                         onPress={() => setStatus(cs.client_id, 'absent')}

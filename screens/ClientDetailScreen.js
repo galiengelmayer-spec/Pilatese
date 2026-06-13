@@ -7,7 +7,6 @@ import { useRoute, useNavigation } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
 import { useStudioSchedule, getSlotsForDay } from '../lib/studioSchedule';
 import { useClientPayments } from '../lib/payments';
-import { guessGenderFromName } from '../lib/hebrewNames';
 import SlidePanel from '../components/SlidePanel';
 
 const DAYS = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי'];
@@ -31,7 +30,7 @@ function getAbsenceDates(slots, weeks = 6) {
 }
 
 const EMPTY_FORM = {
-  name: '', phone: '', paymentType: 'package', gender: 'female',
+  name: '', phone: '', paymentType: 'package',
   selectedDay: null, selectedTime: null, slots: [],
 };
 
@@ -68,22 +67,14 @@ export default function ClientDetailScreen() {
   async function loadClient() {
     const { data } = await supabase
       .from('clients')
-      .select('id, name, phone, payment_type, gender, client_slots(id, day_of_week, time_slot)')
+      .select('id, name, phone, payment_type, client_slots(id, day_of_week, time_slot)')
       .eq('id', clientId)
       .single();
     if (data) {
-      // Auto-detect gender from name; use DB value only if it was explicitly set to 'male'
-      // (all clients defaulted to 'female' so we re-derive from name to fix misclassified males)
-      const detected = guessGenderFromName(data.name);
-      const effectiveGender = detected === 'male' ? 'male' : (data.gender || 'female');
-      if (effectiveGender !== (data.gender || 'female')) {
-        supabase.from('clients').update({ gender: effectiveGender }).eq('id', data.id).then(() => {});
-      }
       setFormState({
         name: data.name,
         phone: data.phone || '',
         paymentType: data.payment_type || 'package',
-        gender: effectiveGender,
         selectedDay: null,
         selectedTime: null,
         slots: (data.client_slots || []).map(s => ({ day: s.day_of_week, time: s.time_slot })),
@@ -97,21 +88,13 @@ export default function ClientDetailScreen() {
   function setField(key, value) {
     setFormState(prev => ({ ...prev, [key]: value }));
     if (!clientId) return;
-    // Map form key → DB column name
-    const dbMap = { paymentType: 'payment_type', name: 'name', phone: 'phone', gender: 'gender' };
+    const dbMap = { paymentType: 'payment_type', name: 'name', phone: 'phone' };
     const dbKey = dbMap[key];
     if (!dbKey) return;
     if (key === 'name' || key === 'phone') {
       clearTimeout(autosaveTimerRef.current);
       autosaveTimerRef.current = setTimeout(() => {
-        const updates = { [dbKey]: value.trim() };
-        // Re-detect gender when name changes, unless user already manually picked 'male'
-        if (key === 'name') {
-          const detected = guessGenderFromName(value.trim());
-          updates.gender = detected;
-          setFormState(prev => ({ ...prev, gender: detected }));
-        }
-        supabase.from('clients').update(updates).eq('id', clientId).then(() => {});
+        supabase.from('clients').update({ [dbKey]: value.trim() }).eq('id', clientId).then(() => {});
       }, 700);
     } else {
       supabase.from('clients').update({ [dbKey]: value }).eq('id', clientId).then(() => {});
@@ -156,7 +139,7 @@ export default function ClientDetailScreen() {
         .from('clients')
         .insert({
           name: form.name.trim(), phone: form.phone.trim(),
-          payment_type: form.paymentType, gender: form.gender,
+          payment_type: form.paymentType,
         })
         .select().single();
       if (error) throw error;
@@ -256,20 +239,6 @@ export default function ClientDetailScreen() {
           style={styles.input} placeholder="טלפון" value={form.phone}
           onChangeText={v => setField('phone', v)} keyboardType="phone-pad" textAlign="right"
         />
-
-        {/* ── Gender ── */}
-        <Text style={styles.sectionLabel}>מגדר</Text>
-        <View style={styles.toggle}>
-          {[['female', 'נקבה'], ['male', 'זכר']].map(([val, label]) => (
-            <TouchableOpacity
-              key={val}
-              style={[styles.toggleBtn, form.gender === val && styles.toggleBtnActive]}
-              onPress={() => setField('gender', val)}
-            >
-              <Text style={[styles.toggleText, form.gender === val && styles.toggleTextActive]}>{label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
 
         {/* ── Payment type ── */}
         <Text style={styles.sectionLabel}>סוג תשלום</Text>
