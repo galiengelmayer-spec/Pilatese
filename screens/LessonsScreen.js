@@ -295,9 +295,11 @@ export default function LessonsScreen() {
     const idx = scrollTargetIdxRef.current;
     if (idx <= 0) return;
     let raf1, raf2;
+    // Show 1 item from yesterday above today rather than starting hard at today
+    const scrollIdx = Math.max(0, idx - 2);
     raf1 = requestAnimationFrame(() => {
       raf2 = requestAnimationFrame(() => {
-        listRef.current?.scrollToIndex({ index: idx, animated: false, viewPosition: 0 });
+        listRef.current?.scrollToIndex({ index: scrollIdx, animated: false, viewPosition: 0 });
       });
     });
     return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); };
