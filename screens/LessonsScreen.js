@@ -292,7 +292,7 @@ export default function LessonsScreen() {
     let raf1, raf2;
     raf1 = requestAnimationFrame(() => {
       raf2 = requestAnimationFrame(() => {
-        listRef.current?.scrollTo({ y, animated: false });
+        listRef.current?.scrollToOffset({ offset: y, animated: false });
       });
     });
     return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); };

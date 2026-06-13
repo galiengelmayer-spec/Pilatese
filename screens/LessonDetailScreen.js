@@ -99,7 +99,6 @@ export default function LessonDetailScreen() {
   substitutions.forEach(s => { subMap[s.absent_client_id] = s.substitute_client_id; });
 
   const displayedRegulars = regularClients.slice(0, MAX_BEDS);
-  const emptyBeds = Math.max(0, MAX_BEDS - displayedRegulars.length);
 
   const presentCount = isFuture ? 0 : (
     displayedRegulars.filter(cs => {
@@ -233,29 +232,21 @@ export default function LessonDetailScreen() {
         subAttId = newRow?.id;
       }
 
-      // 3. Upsert substitution link
-      const { data: existingSub } = await supabase
-        .from('substitutions')
-        .select('id')
-        .eq('lesson_date', date).eq('time_slot', timeSlot).eq('absent_client_id', absentId)
-        .maybeSingle();
-
-      if (existingSub?.id) {
-        const { error: updSubErr } = await supabase.from('substitutions')
-          .update({ substitute_client_id: substituteClient.id })
-          .eq('id', existingSub.id);
-        if (updSubErr) throw updSubErr;
-      } else {
-        const { error: insSubErr } = await supabase.from('substitutions')
-          .insert({ lesson_date: date, time_slot: timeSlot, absent_client_id: absentId, substitute_client_id: substituteClient.id });
-        if (insSubErr) throw insSubErr;
-      }
+      // 3. Write substitution link — delete first (idempotent, no id column needed),
+      // then insert fresh to avoid UNIQUE constraint conflicts on re-replacement.
+      await supabase.from('substitutions')
+        .delete()
+        .eq('lesson_date', date).eq('time_slot', timeSlot).eq('absent_client_id', absentId);
+      const { error: insSubErr } = await supabase.from('substitutions')
+        .insert({ lesson_date: date, time_slot: timeSlot, absent_client_id: absentId, substitute_client_id: substituteClient.id });
+      if (insSubErr) throw insSubErr;
 
       // Update temp record with real DB id
       if (subAttId) {
         setAttendanceRecs(prev => prev.map(a => a.id === '__temp__' ? { ...a, id: subAttId } : a));
       }
     } catch (e) {
+      console.error('selectReplacement failed:', e);
       // Revert optimistic update
       setAttendanceRecs(prev =>
         prev
@@ -362,11 +353,6 @@ export default function LessonDetailScreen() {
               );
             })}
 
-            {Array.from({ length: emptyBeds }).map((_, i) => (
-              <View key={`empty-${i}`} style={[styles.clientRow, styles.emptyRow]}>
-                <Text style={styles.emptySlot}>מקום פנוי</Text>
-              </View>
-            ))}
           </>
         )}
       </SlidePanel>
