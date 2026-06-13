@@ -13,11 +13,23 @@ const INITIAL_BACK = 14;  // days of history on first load
 const INITIAL_AHEAD = 14; // days of future on first load
 const LOAD_STEP = 14;     // days added per lazy-load trigger
 
-// Approximate rendered heights for scroll-offset calculation.
-// scrollToIndex is unreliable on web without getItemLayout; we use scrollTo + manual offset.
-const CARD_H    = 76; // card padding(14*2) + content(~40) + marginBottom(8)
-const DIVIDER_H = 36; // marginTop(16) + label(~16) + marginBottom(4)
-const LIST_PAD  = 12; // contentContainerStyle padding top
+// Item heights used by getItemLayout so scrollToIndex works on web without needing
+// to measure the DOM. Values match the StyleSheet below.
+const CARD_H    = 80; // summary padding(14*2) + content(~44) + marginBottom(8)
+const DIVIDER_H = 38; // marginTop(16) + label(~18) + marginBottom(4)
+const LIST_PAD  = 12; // contentContainerStyle top padding
+
+function getItemLayout(data, index) {
+  let offset = LIST_PAD;
+  for (let i = 0; i < index; i++) {
+    offset += data[i]?.type === 'divider' ? DIVIDER_H : CARD_H;
+  }
+  return {
+    length: data[index]?.type === 'divider' ? DIVIDER_H : CARD_H,
+    offset,
+    index,
+  };
+}
 
 function toDateStr(d) {
   return d.toISOString().split('T')[0];
@@ -275,24 +287,17 @@ export default function LessonsScreen() {
     setExtendingFuture(false);
   }
 
-  // Scroll the target lesson to the top of the viewport once after each focus+load.
-  // scrollToIndex requires getItemLayout on web; we compute the offset manually instead.
+  // Scroll today's lesson to the top of the viewport once after each focus+load.
+  // getItemLayout (above) makes scrollToIndex reliable on web.
   useEffect(() => {
     if (loading || lessons.length === 0 || !shouldScrollRef.current) return;
     shouldScrollRef.current = false;
     const idx = scrollTargetIdxRef.current;
     if (idx <= 0) return;
-
-    const data = buildFlatItems(lessons);
-    let y = LIST_PAD;
-    for (let i = 0; i < idx && i < data.length; i++) {
-      y += data[i].type === 'divider' ? DIVIDER_H : CARD_H;
-    }
-
     let raf1, raf2;
     raf1 = requestAnimationFrame(() => {
       raf2 = requestAnimationFrame(() => {
-        listRef.current?.scrollToOffset({ offset: y, animated: false });
+        listRef.current?.scrollToIndex({ index: idx, animated: false, viewPosition: 0 });
       });
     });
     return () => { cancelAnimationFrame(raf1); cancelAnimationFrame(raf2); };
@@ -323,6 +328,7 @@ export default function LessonsScreen() {
         ref={listRef}
         data={items}
         keyExtractor={item => item.id}
+        getItemLayout={getItemLayout}
         // Prevents scroll jumping when prepending past lessons
         maintainVisibleContentPosition={{ minIndexForVisible: 1 }}
         renderItem={({ item }) => {
@@ -349,6 +355,11 @@ export default function LessonsScreen() {
         scrollEventThrottle={200}
         onEndReached={extendFuture}
         onEndReachedThreshold={0.4}
+        onScrollToIndexFailed={({ index }) => {
+          setTimeout(() => listRef.current?.scrollToIndex({
+            index, animated: false, viewPosition: 0,
+          }), 200);
+        }}
         ListFooterComponent={extendingFuture
           ? <ActivityIndicator style={{ marginVertical: 16 }} color="#6C63FF" />
           : null}
