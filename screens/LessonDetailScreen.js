@@ -101,10 +101,13 @@ export default function LessonDetailScreen() {
   const displayedRegulars = regularClients.slice(0, MAX_BEDS);
   const emptyBeds = Math.max(0, MAX_BEDS - displayedRegulars.length);
 
-  const presentCount = isFuture ? 0 : displayedRegulars.filter(cs => {
-    const s = attMap[cs.client_id]?.status;
-    return !s || s === 'present' || s === 'replaced_out';
-  }).length;
+  const presentCount = isFuture ? 0 : (
+    displayedRegulars.filter(cs => {
+      const s = attMap[cs.client_id]?.status;
+      return !s || s === 'present';
+    }).length
+    + attendanceRecs.filter(a => a.status === 'replacement').length
+  );
 
   async function setStatus(clientId, newStatus) {
     if (newStatus === 'replaced_out') {
